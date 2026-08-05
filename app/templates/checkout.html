@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Checkout · Pizzeria Mari{% endblock %}
+{% block head %}
+  <meta name="csrf-token" content="{{ csrf_token }}">
+{% endblock %}
+
+{% block body %}
+<main class="checkout-shell">
+  <a class="back-link" href="{{ url_for('storefront.index') }}">← Back to menu</a>
+  <section class="checkout-pickup" aria-label="Selected pickup time">
+    <span class="eyebrow">Pickup</span>
+    <h1 id="checkout-date">{{ selected.strftime('%A, %B %-d') }}</h1>
+    <strong id="checkout-time">{{ selected.strftime('%-I:%M %p') }}</strong>
+    <button class="text-button" id="checkout-change-pickup" type="button">Change day or time</button>
+  </section>
+
+  <div class="checkout-grid">
+    <form class="checkout-form" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if error %}<p class="form-error checkout-error">{{ error }}</p>{% endif %}
+      {% if demo_mode %}
+        <div class="demo-notice"><strong>Prototype checkout</strong><span>No card will be charged and no email will be sent yet.</span></div>
+      {% endif %}
+
+      <fieldset>
+        <legend>Who is picking up?</legend>
+        <label>Full name<input name="name" autocomplete="name" value="{{ request.form.get('name', '') }}" required></label>
+        <label>Email<input name="email" type="email" autocomplete="email" value="{{ request.form.get('email', '') }}" required></label>
+        <label>Phone <span>Optional</span><input name="phone" type="tel" autocomplete="tel" value="{{ request.form.get('phone', '') }}"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Coupon or gift card</legend>
+        <div class="code-row">
+          <label class="sr-only" for="discount-code">Coupon or gift card code</label>
+          <input id="discount-code" name="discount_code" autocomplete="off" placeholder="Enter code" value="{{ request.form.get('discount_code', '') }}">
+          <button class="button button-light" id="apply-code" type="button">Apply</button>
+        </div>
+        <p class="field-note" id="code-message" aria-live="polite"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Add a tip</legend>
+        <div class="tip-row">
+          {% for value in [15, 20, 25, 0] %}
+            <label class="tip-choice">
+              <input type="radio" name="tip_choice" value="{{ value }}" {% if selected_tip == value|string %}checked{% endif %}>
+              <span>{% if value == 0 %}No tip{% else %}{{ value }}%{% endif %}</span>
+            </label>
+          {% endfor %}
+          <label class="tip-choice">
+            <input type="radio" name="tip_choice" value="custom" {% if selected_tip == 'custom' %}checked{% endif %}>
+            <span>Custom</span>
+          </label>
+        </div>
+        <label class="custom-tip" id="custom-tip-wrap" {% if selected_tip != 'custom' %}hidden{% endif %}>
+          Custom tip amount
+          <span class="money-input"><span>$</span><input id="custom-tip" name="custom_tip" type="number" min="0" max="1000" step="0.01" inputmode="decimal" value="{{ custom_tip_value }}" placeholder="0.00"></span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Order notes <span>Optional</span></legend>
+        <label class="sr-only" for="notes">Order notes</label>
+        <textarea id="notes" name="notes" maxlength="550" rows="4" placeholder="Allergies, substitutions, or anything else we should know?">{{ request.form.get('notes', '') }}</textarea>
+      </fieldset>
+
+      <fieldset>
+        <legend>Payment</legend>
+        <div class="payment-placeholder">
+          <strong>Secure Square payment form</strong>
+          <span>The live card and gift card fields will appear here after Sandbox credentials are connected.</span>
+        </div>
+      </fieldset>
+
+      <button class="button button-primary button-block checkout-submit" type="submit">
+        {% if demo_mode %}Place demo order · <span id="submit-total">{{ checkout.total }}</span>{% else %}Pay <span id="submit-total">{{ checkout.total }}</span> and place order{% endif %}
+      </button>
+    </form>
+
+    <aside class="order-summary">
+      <span class="eyebrow">Order summary</span>
+      <h2 id="summary-item-count">{{ cart.totals.item_count }} item{% if cart.totals.item_count != 1 %}s{% endif %}</h2>
+      <div id="summary-lines">
+        {% for line in cart.lines %}
+          <div class="summary-line">
+            <div>
+              <strong>{{ line.name }}</strong>
+              {% if line.modifiers %}<span>{{ line.modifiers|join(' · ') }}</span>{% endif %}
+              <div class="line-actions line-actions-light" aria-label="Quantity for {{ line.name }}">
+                <div class="line-quantity">
+                  <button type="button" data-cart-action="decrease" data-line-id="{{ line.id }}" data-quantity="{{ line.quantity }}" aria-label="Decrease {{ line.name }} quantity">−</button>
+                  <strong>{{ line.quantity }}</strong>
+                  <button type="button" data-cart-action="increase" data-line-id="{{ line.id }}" data-quantity="{{ line.quantity }}" aria-label="Increase {{ line.name }} quantity">+</button>
+                </div>
+                <button class="remove-line" type="button" data-remove-line="{{ line.id }}">Remove</button>
+              </div>
+            </div>
+            <span>{{ line.price }}</span>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="summary-error" id="summary-error" role="alert" hidden></p>
+      <div class="summary-totals">
+        <div><span>Subtotal</span><strong id="summary-subtotal">{{ checkout.subtotal }}</strong></div>
+        <div><span>Sales tax ({{ checkout.tax_rate }})</span><strong id="summary-tax">{{ checkout.tax }}</strong></div>
+        <div><span>Tip <small id="tip-label">({{ checkout.tip_label }})</small></span><strong id="tip-total">{{ checkout.tip }}</strong></div>
+        <div class="summary-grand-total"><span>Total</span><strong id="grand-total">{{ checkout.total }}</strong></div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+{% include "_pickup_dialog.html" %}
+
+<script>
+  window.CHECKOUT_DATA = {{ {
+    "subtotalCents": checkout.subtotal_cents,
+    "taxCents": checkout.tax_cents,
+    "taxRate": sales_tax_rate,
+    "cart": cart,
+    "pizzaLimit": pizza_limit,
+    "totalLimit": total_limit,
+    "selectedDate": selected.strftime('%Y-%m-%d'),
+    "demoMode": demo_mode
+  }|tojson }};
+</script>
+<script src="{{ url_for('static', filename='checkout.js') }}" defer></script>
+{% endblock %}

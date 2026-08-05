@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Order confirmed · Pizzeria Mari{% endblock %}
+
+{% block body %}
+<main class="confirmation-shell">
+  <div class="confirmation-mark">✓</div>
+  <span class="eyebrow">{% if demo_mode %}Demo order{% else %}Order confirmed{% endif %}</span>
+  <h1>Thanks, {{ customer_name }}.</h1>
+  <p class="confirmation-time">Pickup is <strong>{{ selected.strftime('%A, %B %-d at %-I:%M %p') }}</strong>.</p>
+  <div class="confirmation-details">
+    <span>Confirmation</span><strong>{{ order.confirmation_code }}</strong>
+    <span>Email</span><strong>{{ customer_email }}</strong>
+    <span>Total</span><strong>{{ checkout.total }}</strong>
+  </div>
+  {% if demo_mode %}
+    <p>This prototype reserved the slot locally, but it did not charge a card, create a Square order, or send an email.</p>
+  {% else %}
+    <p>A receipt is on its way to {{ customer_email }}.</p>
+  {% endif %}
+  <a class="button button-dark" href="{{ url_for('storefront.index') }}">Return to menu</a>
+</main>
+{% endblock %}

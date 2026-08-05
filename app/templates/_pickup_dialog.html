@@ -1,0 +1,18 @@
+<dialog class="modal" id="pickup-dialog">
+  <div class="modal-header">
+    <div>
+      <span class="eyebrow">Pickup</span>
+      <h2>Choose a day and time</h2>
+    </div>
+    <button class="icon-button" type="button" data-close-dialog="pickup-dialog" aria-label="Close">×</button>
+  </div>
+  <p class="modal-lede">Select a pickup time for your order.</p>
+  <div class="date-row" id="date-row">
+    {% for day in date_choices %}
+      <button class="date-choice" type="button" data-date="{{ day.iso }}">
+        <span>{{ day.weekday }}</span><strong>{{ day.month_day }}</strong>
+      </button>
+    {% endfor %}
+  </div>
+  <div class="slot-grid" id="slot-grid" aria-live="polite"></div>
+</dialog>

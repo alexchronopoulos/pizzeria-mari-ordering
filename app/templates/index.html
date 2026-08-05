@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block head %}
+  <meta name="csrf-token" content="{{ csrf_token }}">
+{% endblock %}
+
+{% block body %}
+<main class="store-shell">
+  <section class="pickup-banner" aria-label="Selected pickup time">
+    <div>
+      <span class="eyebrow">Your pickup</span>
+      {% if selected %}
+        <strong id="selected-pickup">{{ selected.date }} at {{ selected.time }}</strong>
+      {% else %}
+        <strong>No pickup times available</strong>
+      {% endif %}
+    </div>
+    {% if selected %}<button class="button button-dark" id="change-pickup">Change day or time</button>{% endif %}
+  </section>
+
+  <div class="layout-grid">
+    <section class="menu-column">
+      {% for group in menu_groups %}
+        <section class="menu-group" id="{{ group.id }}">
+          <div class="section-heading">
+            <h2>{{ group.label }}</h2>
+          </div>
+          <div class="menu-grid">
+            {% for item in group["items"] %}
+              <button
+                class="menu-card"
+                data-item-id="{{ item.id }}"
+                {% if not item.available %}disabled{% endif %}
+                aria-label="Select {{ item.name }}"
+              >
+                <span class="menu-card-copy">
+                  <strong>{{ item.name }}</strong>
+                  <span>{{ item.description }}</span>
+                  <span class="price">${{ '%.2f'|format(item.price_cents / 100) }}</span>
+                  {% if not item.available %}<em>Out of stock</em>{% endif %}
+                </span>
+                <span class="pizza-art pizza-{{ item.art }}" aria-hidden="true"></span>
+              </button>
+            {% endfor %}
+          </div>
+        </section>
+      {% endfor %}
+    </section>
+
+    <aside class="cart-card" id="cart" aria-live="polite">
+      <div class="cart-heading">
+        <div>
+          <span class="eyebrow">Your order</span>
+          <h2>Cart</h2>
+        </div>
+        <span class="cart-count" id="cart-count">{{ cart_payload.totals.item_count }}</span>
+      </div>
+      <div id="cart-lines"></div>
+      <p class="cart-error" id="cart-error" role="alert" hidden></p>
+      <div class="cart-empty" id="cart-empty" {% if cart_payload.lines %}hidden{% endif %}>
+        <p>Nothing here yet.</p>
+        <span>You can add up to {{ pizza_limit }} pizzas and {{ total_limit }} items total.</span>
+      </div>
+      <div class="cart-footer" id="cart-footer" {% if not cart_payload.lines %}hidden{% endif %}>
+        <div class="cart-total"><span>Subtotal</span><strong id="cart-subtotal">{{ cart_payload.totals.subtotal }}</strong></div>
+        <a class="button button-primary button-block" href="{{ url_for('storefront.checkout') }}">Checkout</a>
+      </div>
+    </aside>
+  </div>
+</main>
+
+{% include "_pickup_dialog.html" %}
+
+<dialog class="modal item-modal" id="item-dialog">
+  <div class="modal-header">
+    <div>
+      <span class="eyebrow" id="item-category"></span>
+      <h2 id="item-name"></h2>
+    </div>
+    <button class="icon-button" data-close-dialog="item-dialog" aria-label="Close">×</button>
+  </div>
+  <p class="modal-lede" id="item-description"></p>
+  <div class="item-modal-row">
+    <div class="pizza-art pizza-plain pizza-large" id="item-art" aria-hidden="true"></div>
+    <div>
+      <span class="eyebrow">Quantity</span>
+      <div class="quantity-control">
+        <button id="quantity-down" aria-label="Decrease quantity">−</button>
+        <strong id="quantity-value">1</strong>
+        <button id="quantity-up" aria-label="Increase quantity">+</button>
+      </div>
+    </div>
+  </div>
+  <fieldset class="modifier-list preference-list">
+    <legend>Preferences <span>Optional</span></legend>
+    <div id="item-preferences"></div>
+  </fieldset>
+  <fieldset class="modifier-list addition-picker">
+    <legend>Additions <span>Optional</span></legend>
+    <p>Choose an addition, then place it on the whole pie or either half.</p>
+    <div id="item-additions"></div>
+  </fieldset>
+  <p class="form-error" id="item-error" hidden></p>
+  <button class="button button-primary button-block" id="add-to-cart">
+    <span id="add-to-cart-label">Add to order</span><span id="item-price"></span>
+  </button>
+</dialog>
+
+<script>
+  window.PIZZERIA_DATA = {{ {
+    "menu": menu_json,
+    "cart": cart_payload,
+    "pizzaLimit": pizza_limit,
+    "totalLimit": total_limit,
+    "selectedDate": selected.iso[:10] if selected else none
+  }|tojson }};
+</script>
+<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+{% endblock %}

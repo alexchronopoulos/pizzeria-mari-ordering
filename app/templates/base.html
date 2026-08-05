@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#005586">
+    <title>{% block title %}Pizzeria Mari{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="wordmark" href="{{ url_for('storefront.index') }}">
+        <img src="{{ url_for('static', filename='images/pizzeria-mari-logo-cream.png') }}" alt="Pizzeria Mari">
+      </a>
+      <div class="header-meta">
+        <span>625 River St · Troy, NY</span>
+        <a href="{{ url_for('storefront.index') }}#cart">Cart</a>
+      </div>
+    </header>
+    {% block body %}{% endblock %}
+  </body>
+</html>

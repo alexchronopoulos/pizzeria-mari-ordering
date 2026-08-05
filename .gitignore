@@ -1,0 +1,51 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+# Licensed fonts stay local unless their licenses allow public redistribution
+app/static/fonts/*.otf
+app/static/fonts/*.ttf
+app/static/fonts/*.woff
+app/static/fonts/*.woff2
+!app/static/fonts/README.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Runtime data
+instance/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Tests and coverage
+.pytest_cache/
+pytest-of-root/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local tooling and editor state
+.DS_Store
+.idea/
+.vscode/
+test-artifacts/
+visual_check.mjs
+
+# Downloaded update packages are removed by update.sh
+*.zip
