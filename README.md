@@ -15,12 +15,13 @@ This first iteration is a local prototype. It reproduces the important parts of 
 - Configurable cart-wide and capacity-category limits.
 - A default limit of three pizzas per cart.
 - Quantity controls on both the menu cart and checkout order summary.
-- A clear three-pizza maximum message on the Add to Order button when a customer tries to exceed the limit.
+- Item quantity controls stop at the remaining cart allowance, with the three-pizza maximum reinforced on the Add to Order button.
 - A default limit of three confirmed pizzas per pickup slot.
-- Slots remain open internally until all three pizza positions are claimed; customers see only the pickup times that can accommodate their cart, never the production count.
+- Slots remain open internally until all three pizza positions are claimed; every scheduled time remains visible, while times that cannot accommodate the cart are disabled and full times are clearly labeled without exposing production counts.
 - Server-side capacity enforcement inside a SQLite write transaction, preventing two local checkouts from both claiming the final capacity.
 - Branded logo with Compagnon for display headings and Semplicita for body copy.
 - One compact additions picker with whole-pie, first-half, and second-half placement instead of three repetitive modifier lists.
+- Item preferences are not duplicated in the prototype; item-specific choices will come directly from Square modifier lists.
 - Server-validated modifier selections and modifier pricing.
 - Guest checkout fields for name, email, phone, coupon/gift card code, tip, and order notes.
 - An 8% configurable Rensselaer County sales-tax calculation, a preselected 15% tip, and a custom tip amount.

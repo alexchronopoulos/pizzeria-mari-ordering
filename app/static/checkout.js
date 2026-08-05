@@ -140,8 +140,9 @@
     try {
       const payload = await api(`/api/slots?date=${encodeURIComponent(date)}`);
       slotGrid.innerHTML = payload.slots.map((slot) => `
-        <button class="slot-choice" type="button" data-service-at="${slot.iso}">
+        <button class="slot-choice${slot.available ? '' : ' slot-choice-unavailable'}" type="button" data-service-at="${slot.iso}" ${slot.available ? '' : 'disabled'}>
           <strong>${slot.time}</strong>
+          ${slot.status ? `<span>${escapeHtml(slot.status)}</span>` : ''}
         </button>
       `).join('') || '<p>No pickup times are available for this day.</p>';
     } catch (error) {

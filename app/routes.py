@@ -146,32 +146,12 @@ def _selected_slot() -> datetime | None:
 
 
 def _validated_modifiers(item, payload: dict) -> list[dict]:
-    requested_preferences = payload.get("preferences", [])
     requested_additions = payload.get("additions", [])
-    if not isinstance(requested_preferences, list) or not isinstance(
-        requested_additions, list
-    ):
+    if not isinstance(requested_additions, list):
         raise ValueError("Choose valid item options.")
 
-    preference_options = {option.id: option for option in item.preferences}
     addition_options = {option.id: option for option in item.additions}
     modifiers = []
-    seen_preferences = set()
-    for preference_id in requested_preferences:
-        option = preference_options.get(preference_id)
-        if not option or preference_id in seen_preferences:
-            raise ValueError("Choose valid item options.")
-        seen_preferences.add(preference_id)
-        modifiers.append(
-            {
-                "kind": "preference",
-                "id": option.id,
-                "name": option.name,
-                "display": option.name,
-                "price_cents": 0,
-            }
-        )
-
     seen_additions = set()
     for requested in requested_additions:
         if not isinstance(requested, dict):
@@ -311,11 +291,19 @@ def api_slots():
     allowed = {choice["iso"] for choice in _date_choices()}
     if day.isoformat() not in allowed:
         return jsonify({"error": "That date is not available for ordering."}), 400
-    slots = [
-        {"iso": slot["iso"], "time": slot["time"]}
-        for slot in _slots(day)
-        if slot["available"]
-    ]
+    slots = []
+    for slot in _slots(day):
+        status = None
+        if not slot["available"]:
+            status = "Full" if slot["remaining"] == 0 else "Unavailable"
+        slots.append(
+            {
+                "iso": slot["iso"],
+                "time": slot["time"],
+                "available": slot["available"],
+                "status": status,
+            }
+        )
     return jsonify({"date": day.isoformat(), "slots": slots})
 
 

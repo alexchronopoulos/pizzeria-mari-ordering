@@ -4,15 +4,6 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
-class Preference:
-    id: str
-    name: str
-
-    def public_dict(self) -> dict:
-        return {"id": self.id, "name": self.name}
-
-
-@dataclass(frozen=True)
 class Addition:
     id: str
     name: str
@@ -39,7 +30,6 @@ class MenuItem:
     capacity_category: str | None
     price_cents: int
     description: str
-    preferences: tuple[Preference, ...] = field(default_factory=tuple)
     additions: tuple[Addition, ...] = field(default_factory=tuple)
     available: bool = True
     art: str = "plain"
@@ -54,7 +44,6 @@ class MenuItem:
             "price_cents": self.price_cents,
             "price": f"${self.price_cents / 100:.2f}",
             "description": self.description,
-            "preferences": [option.public_dict() for option in self.preferences],
             "additions": [option.public_dict() for option in self.additions],
             "available": self.available,
             "art": self.art,
@@ -79,13 +68,6 @@ COMMON_ADDITIONS = (
 )
 
 
-def preferences(*names: str) -> tuple[Preference, ...]:
-    return tuple(
-        Preference(name.lower().replace("’", "").replace("'", "").replace(" ", "-"), name)
-        for name in names
-    )
-
-
 ITEMS = (
     MenuItem(
         id="cherry-tomato",
@@ -98,7 +80,6 @@ ITEMS = (
             "Slow roasted Sprouting Heart Farm cherry tomato confit, aged mozzarella, "
             "pickled garlic scapes. Finished with house stracciatella, basil pesto, and parm."
         ),
-        preferences=preferences("No Basil", "No Parm", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="cherry",
     ),
@@ -113,7 +94,6 @@ ITEMS = (
             "Cherry tomato vodka sauce, cup & crisp pepperoni, Cobanero chili, scamorza, "
             "aged mozzarella, black pepper, basil, and pecorino."
         ),
-        preferences=preferences("No Basil", "No Pecorino", "Double Cut"),
         additions=COMMON_ADDITIONS,
         available=False,
         art="sungold",
@@ -129,7 +109,6 @@ ITEMS = (
             "Aged mozzarella, fresh mozzarella, Cal-Jersey tomato sauce. Finished with "
             "24 month parm, extra virgin olive oil, and fresh basil."
         ),
-        preferences=preferences("No Basil", "No Parm", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="plain",
     ),
@@ -144,7 +123,6 @@ ITEMS = (
             "Double Cal-Jersey tomato sauce and garlic panko. Finished with oregano and "
             "extra virgin olive oil. Vegan friendly."
         ),
-        preferences=preferences("No Garlic Panko", "No Oregano", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="tomato",
     ),
@@ -159,7 +137,6 @@ ITEMS = (
             "Aged mozzarella, fresh mozzarella, hand-dipped ricotta, and garlic confit. "
             "Finished with extra virgin olive oil and 24 month parm."
         ),
-        preferences=preferences("No Ricotta", "No Garlic", "No Parm", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="white",
     ),
@@ -174,7 +151,6 @@ ITEMS = (
             "Local oyster mushrooms, creme fraiche, Jasper Hill Alpha Tolman, aged "
             "mozzarella, pickled red onions, seasonal herbs, and black pepper."
         ),
-        preferences=preferences("No Onion", "No Herbs", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="mushroom",
     ),
@@ -189,7 +165,6 @@ ITEMS = (
             "Cup & crisp pepperoni, aged mozzarella, scamorza, tomato sauce, and pickled "
             "chiles. Finished with Mari's hot honey, pecorino, and fennel pollen."
         ),
-        preferences=preferences("No Hot Honey", "No Chiles", "No Pecorino", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="pepperoni",
     ),
@@ -204,7 +179,6 @@ ITEMS = (
             "La Salumina ’nduja, scamorza, aged mozzarella, and tomato sauce. Finished "
             "with black malt vinegar, house stracciatella, and pecorino."
         ),
-        preferences=preferences("No Stracciatella", "No Vinegar", "No Pecorino", "Double Cut"),
         additions=COMMON_ADDITIONS,
         art="nduja",
     ),

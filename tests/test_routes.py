@@ -116,12 +116,38 @@ def test_cart_quantity_controls_and_three_pizza_button_message_are_present(app):
     assert b'data-cart-action="increase"' in checkout.data
     assert b'data-cart-action="decrease"' in checkout.data
     assert b"Add to order \xc2\xb7 ${data.pizzaLimit} pizza maximum" in javascript.data
+    assert b"quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit" in javascript.data
 
 
-def test_pickup_api_exposes_times_without_capacity_counts(app):
-    payload = app.test_client().get("/api/slots?date=2026-08-06").get_json()
+def test_pickup_api_keeps_full_times_visible_without_capacity_counts(app):
+    service_at = "2026-08-06T16:00:00-04:00"
+    app.extensions["capacity_store"].confirm_demo_order(
+        service_at=service_at,
+        pizza_count=3,
+        capacity=3,
+        customer={"name": "Alex", "email": "alex@example.com", "phone": ""},
+        notes="",
+        tip_cents=0,
+        cart=[{"item_id": "plain", "quantity": 3}],
+    )
+
+    client = app.test_client()
+    payload = client.get("/api/slots?date=2026-08-06").get_json()
     assert payload["slots"]
-    assert set(payload["slots"][0]) == {"iso", "time"}
+    assert set(payload["slots"][0]) == {"iso", "time", "available", "status"}
+    assert payload["slots"][0] == {
+        "iso": service_at,
+        "time": "4:00 PM",
+        "available": False,
+        "status": "Full",
+    }
+    assert "remaining" not in payload["slots"][0]
+
+    javascript = client.get("/static/app.js")
+    checkout_javascript = client.get("/static/checkout.js")
+    assert b"slot-choice-unavailable" in javascript.data
+    assert b"slot.status" in javascript.data
+    assert b"slot-choice-unavailable" in checkout_javascript.data
 
 
 def test_addition_placement_is_validated_and_priced(app):
@@ -132,7 +158,6 @@ def test_addition_placement_is_validated_and_priced(app):
         json={
             "item_id": "plain",
             "quantity": 1,
-            "preferences": ["no-basil"],
             "additions": [{"id": "pepperoni", "placement": "first_half"}],
         },
         headers={"X-CSRF-Token": token},
@@ -140,10 +165,17 @@ def test_addition_placement_is_validated_and_priced(app):
     assert response.status_code == 201
     payload = response.get_json()
     assert payload["totals"]["subtotal"] == "$29.00"
-    assert payload["lines"][0]["modifiers"] == [
-        "No Basil",
-        "Pepperoni · First half",
-    ]
+    assert payload["lines"][0]["modifiers"] == ["Pepperoni · First half"]
+
+
+def test_preferences_are_removed_from_items_and_item_dialog(app):
+    client = app.test_client()
+    menu = client.get("/")
+    javascript = client.get("/static/app.js")
+
+    assert b"Preferences" not in menu.data
+    assert b"item-preferences" not in menu.data
+    assert b"activeItem.preferences" not in javascript.data
 
 
 def test_checkout_shows_tax_default_tip_code_field_and_inline_pickup_change(app):

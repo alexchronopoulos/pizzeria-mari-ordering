@@ -8,7 +8,6 @@
   let activeItem = null;
   let quantity = 1;
   let selectedAdditions = new Map();
-  let limitAttempted = null;
 
   const escapeHtml = (value) => String(value)
     .replaceAll('&', '&amp;')
@@ -76,8 +75,9 @@
     try {
       const payload = await api(`/api/slots?date=${encodeURIComponent(date)}`);
       slotGrid.innerHTML = payload.slots.map((slot) => `
-        <button class="slot-choice" type="button" data-service-at="${slot.iso}">
+        <button class="slot-choice${slot.available ? '' : ' slot-choice-unavailable'}" type="button" data-service-at="${slot.iso}" ${slot.available ? '' : 'disabled'}>
           <strong>${slot.time}</strong>
+          ${slot.status ? `<span>${escapeHtml(slot.status)}</span>` : ''}
         </button>
       `).join('') || '<p>No pickup times are available for this day.</p>';
     } catch (error) {
@@ -116,13 +116,21 @@
     const button = document.querySelector('#add-to-cart');
     const label = document.querySelector('#add-to-cart-label');
     const price = document.querySelector('#item-price');
+    const quantityUp = document.querySelector('#quantity-up');
     const pizzaCount = data.cart.totals.pizza_count;
     const itemCount = data.cart.totals.item_count;
+    const reachesPizzaLimit = activeItem.capacity_category === 'pizza'
+      && pizzaCount + quantity >= data.pizzaLimit;
+    const reachesTotalLimit = itemCount + quantity >= data.totalLimit;
 
     button.disabled = false;
     button.classList.remove('button-limit');
     price.hidden = false;
     label.textContent = 'Add to order';
+    quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit;
+    quantityUp.title = reachesPizzaLimit
+      ? `${data.pizzaLimit} pizza maximum`
+      : (reachesTotalLimit ? `${data.totalLimit} item maximum` : '');
 
     if (activeItem.capacity_category === 'pizza' && pizzaCount >= data.pizzaLimit) {
       label.textContent = `${data.pizzaLimit} pizza maximum reached`;
@@ -134,9 +142,11 @@
       price.hidden = true;
       button.disabled = true;
       button.classList.add('button-limit');
-    } else if (limitAttempted) {
-      label.textContent = limitAttempted;
-      price.hidden = true;
+    } else if (reachesPizzaLimit) {
+      label.textContent = `Add to order · ${data.pizzaLimit} pizza maximum`;
+      button.classList.add('button-limit');
+    } else if (reachesTotalLimit) {
+      label.textContent = `Add to order · ${data.totalLimit} item maximum`;
       button.classList.add('button-limit');
     }
   };
@@ -158,15 +168,11 @@
       activeItem = data.menu[card.dataset.itemId];
       quantity = 1;
       selectedAdditions = new Map();
-      limitAttempted = null;
       itemError.hidden = true;
       document.querySelector('#item-category').textContent = activeItem.category_label;
       document.querySelector('#item-name').textContent = activeItem.name;
       document.querySelector('#item-description').textContent = activeItem.description;
       document.querySelector('#item-art').className = `pizza-art pizza-${activeItem.art} pizza-large`;
-      document.querySelector('#item-preferences').innerHTML = activeItem.preferences.map((preference) => `
-        <label><input type="checkbox" value="${escapeHtml(preference.id)}"> <span>${escapeHtml(preference.name)}</span></label>
-      `).join('');
       document.querySelector('#item-additions').innerHTML = activeItem.additions.map((addition) => `
         <div class="addition-row" data-addition-id="${escapeHtml(addition.id)}">
           <strong>${escapeHtml(addition.name)}</strong>
@@ -185,7 +191,6 @@
 
   document.querySelector('#quantity-down')?.addEventListener('click', () => {
     quantity = Math.max(1, quantity - 1);
-    limitAttempted = null;
     updateItemPrice();
   });
   document.querySelector('#quantity-up')?.addEventListener('click', () => {
@@ -194,17 +199,12 @@
       activeItem.capacity_category === 'pizza'
       && data.cart.totals.pizza_count + nextQuantity > data.pizzaLimit
     ) {
-      limitAttempted = `Add to order · ${data.pizzaLimit} pizza maximum`;
-      updateItemPrice();
       return;
     }
     if (data.cart.totals.item_count + nextQuantity > data.totalLimit) {
-      limitAttempted = `Add to order · ${data.totalLimit} item maximum`;
-      updateItemPrice();
       return;
     }
     quantity = nextQuantity;
-    limitAttempted = null;
     updateItemPrice();
   });
 
@@ -222,13 +222,11 @@
   });
 
   document.querySelector('#add-to-cart')?.addEventListener('click', async () => {
-    const preferences = [...document.querySelectorAll('#item-preferences input:checked')]
-      .map((input) => input.value);
     const additions = [...selectedAdditions.entries()].map(([id, placement]) => ({ id, placement }));
     try {
       const cart = await api('/api/cart', {
         method: 'POST',
-        body: JSON.stringify({ item_id: activeItem.id, quantity, preferences, additions }),
+        body: JSON.stringify({ item_id: activeItem.id, quantity, additions }),
       });
       renderCart(cart);
       itemDialog.close();
