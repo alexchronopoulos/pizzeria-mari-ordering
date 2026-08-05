@@ -37,6 +37,25 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
     assert b"category-nav" not in response.data
+    assert b'class="menu-card-media"' in response.data
+    assert response.data.index(b'class="menu-card-media"') < response.data.index(
+        b"<strong>Cherry Tomato</strong>"
+    )
+
+    css = app.test_client().get("/static/style.css").get_data(as_text=True)
+    assert ".menu-card {" in css
+    assert "border: 2px solid var(--ink)" in css
+    assert "background-size: cover" in css
+    assert "background-position: center 56%" in css
+    assert ".item-detail-media" in css
+    detail_rules = css[
+        css.index(".item-detail-media {"):
+        css.index(".item-detail-media #item-art:not(.item-photo)")
+    ]
+    assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
+    assert "background-size: cover" in detail_rules
+    assert b"/static/style.css?v=0.11.0" in response.data
+    assert b"/static/app.js?v=0.11.0" in response.data
 
 
 def test_brand_typography_uses_compagnon_for_display_and_semplicita_for_body(app):

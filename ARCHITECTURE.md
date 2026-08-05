@@ -54,7 +54,9 @@ No customer name, email, phone, cart, catalog object, amount, payment ID, or ord
 ## Square responsibilities
 
 - Catalog API loads only explicitly allowed regular categories and their items, variations, images, sold-out state, and attached modifier lists.
-- Square's three addition-placement modifier lists are normalized into one picker, then mapped back to the exact modifier catalog ID at order creation.
+- Square's Whole Pie Additions list is the canonical visible option set. Matching First Half and Second Half list entries supply the placement-specific catalog IDs and prices, and all three lists render as one picker.
+- Square's `-1` item-level modifier sentinel inherits the list-level minimum and maximum; a zero maximum is normalized as unlimited before browser or server validation.
+- Modifier lists configured as customer-hidden in `.env` are filtered in memory and never copied into application storage.
 - CalculateOrder supplies taxes and automatic catalog discounts shown at checkout.
 - Orders API creates the scheduled `PICKUP` fulfillment.
 - Web Payments SDK securely renders card entry and creates a single-use token.

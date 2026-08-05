@@ -35,6 +35,8 @@ def catalog_objects() -> list[dict]:
             "modifier_list_data": {
                 "name": name,
                 "selection_type": "MULTIPLE",
+                "min_selected_modifiers": 0,
+                "max_selected_modifiers": 0,
                 "modifiers": [
                     {
                         "type": "MODIFIER",
@@ -54,7 +56,67 @@ def catalog_objects() -> list[dict]:
         modifier_list("ADD_FIRST", "First Half Pie Additions", "MOD_FIRST_PEP", 300),
         modifier_list("ADD_SECOND", "Second Half Pie Additions", "MOD_SECOND_PEP", 300),
         modifier_list("PREFERENCES", "Preferences", "MOD_DOUBLE_CUT", 0),
+        modifier_list("SIDES", "Sides & Desserts", "MOD_SIDE_SALAD", 1200),
+        modifier_list("DRINKS", "Drinks", "MOD_DRINK_COLA", 300),
     ]
+    modifiers[3]["modifier_list_data"]["modifiers"].append(
+        {
+            "type": "MODIFIER",
+            "id": "MOD_NO_BASIL",
+            "version": 12,
+            "modifier_data": {
+                "name": "No Basil",
+                "price_money": {"amount": 0, "currency": "USD"},
+            },
+        }
+    )
+    modifiers[0]["modifier_list_data"]["modifiers"].append(
+        {
+            "type": "MODIFIER",
+            "id": "MOD_WHOLE_MUSHROOM",
+            "version": 12,
+            "modifier_data": {
+                "name": "Oyster Mushrooms",
+                "price_money": {"amount": 600, "currency": "USD"},
+            },
+        }
+    )
+    modifiers[1]["modifier_list_data"]["modifiers"].extend(
+        [
+            {
+                "type": "MODIFIER",
+                "id": "MOD_FIRST_MUSHROOM",
+                "version": 12,
+                "modifier_data": {
+                    "name": "First Half Oyster Mushrooms",
+                    "price_money": {"amount": 350, "currency": "USD"},
+                },
+            },
+            {
+                "type": "MODIFIER",
+                "id": "MOD_FIRST_ONLY",
+                "version": 12,
+                "modifier_data": {
+                    "name": "Half-list-only option",
+                    "price_money": {"amount": 100, "currency": "USD"},
+                },
+            },
+        ]
+    )
+    modifiers[2]["modifier_list_data"]["modifiers"].append(
+        {
+            "type": "MODIFIER",
+            "id": "MOD_SECOND_MUSHROOM",
+            "version": 12,
+            "modifier_data": {
+                # Deliberately not a textual match: real Square catalogs often
+                # keep parallel placement lists aligned but label them
+                # differently. The list position is the final correspondence.
+                "name": "Mushroom surcharge",
+                "price_money": {"amount": 375, "currency": "USD"},
+            },
+        }
+    )
     image = {
         "type": "IMAGE",
         "id": "IMAGE_PLAIN",
@@ -75,9 +137,11 @@ def catalog_objects() -> list[dict]:
                 {
                     "modifier_list_id": "PREFERENCES",
                     "enabled": True,
-                    "min_selected_modifiers": 0,
-                    "max_selected_modifiers": 1,
+                    "min_selected_modifiers": -1,
+                    "max_selected_modifiers": -1,
                 },
+                {"modifier_list_id": "SIDES", "enabled": True},
+                {"modifier_list_id": "DRINKS", "enabled": True},
             ],
             "variations": [
                 {
@@ -217,8 +281,129 @@ def test_square_catalog_drives_items_images_and_modifier_groups(square_app):
     assert b"MOD_FIRST_PEP" in response.data
     assert b"MOD_SECOND_PEP" in response.data
     assert b"Preferences" in response.data
+    assert b"Sides &amp; Desserts" not in response.data
+    assert b"MOD_SIDE_SALAD" not in response.data
+    assert b"MOD_DRINK_COLA" not in response.data
     assert b"Cherry Tomato" not in response.data
     assert b"sandbox.web.squarecdn.com" not in response.data
+
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_PLAIN"]
+    )
+    assert [addition.name for addition in item.additions] == [
+        "Pepperoni",
+        "Oyster Mushrooms",
+    ]
+    assert set(item.additions[0].placements) == {
+        "whole",
+        "first_half",
+        "second_half",
+    }
+    assert [group.name for group in item.modifier_groups] == ["Preferences"]
+    assert item.modifier_groups[0].min_selected == 0
+    assert item.modifier_groups[0].max_selected is None
+
+
+def test_square_menu_uses_large_borderless_image_above_item_name(square_app):
+    response = square_app.test_client().get("/")
+    html = response.get_data(as_text=True)
+    css = square_app.test_client().get("/static/style.css").get_data(as_text=True)
+
+    card_start = html.index('class="menu-card"')
+    image_position = html.index('class="menu-photo"', card_start)
+    name_position = html.index("<strong>Plain</strong>", card_start)
+    assert image_position < name_position
+    detail_image_position = html.index('class="item-detail-media"')
+    detail_name_position = html.index('id="item-name"')
+    assert detail_image_position < detail_name_position
+    assert '<span class="menu-photo" data-image-url="https://example.com/plain.jpg"></span>' in html
+    assert '<img class="menu-photo"' not in html
+    assert ".menu-card-media" in css
+    assert "aspect-ratio: 1" in css
+    assert ".menu-card {" in css and "border: 2px solid var(--ink)" in css
+    assert ".menu-photo" in css and "background-size: cover" in css
+    assert "background-position: center 56%" in css
+    detail_rules = css[css.index(".item-detail-media {"):css.index(".item-detail-media #item-art:not(.item-photo)")]
+    assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
+    assert "aspect-ratio" not in detail_rules
+    assert "background: transparent" in detail_rules
+    assert "background-size: cover" in detail_rules
+    assert "background-position: center 58%" in detail_rules
+
+
+def test_square_additions_use_whole_list_as_the_single_canonical_option_set(square_app):
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_PLAIN"]
+    )
+
+    assert [addition.name for addition in item.additions] == [
+        "Pepperoni",
+        "Oyster Mushrooms",
+    ]
+    assert "Half-list-only option" not in [
+        addition.name for addition in item.additions
+    ]
+
+    mushrooms = item.additions[1]
+    assert mushrooms.placements["whole"].id == "MOD_WHOLE_MUSHROOM"
+    assert mushrooms.placements["whole"].price_cents == 600
+    assert mushrooms.placements["first_half"].id == "MOD_FIRST_MUSHROOM"
+    assert mushrooms.placements["first_half"].price_cents == 350
+    assert mushrooms.placements["second_half"].id == "MOD_SECOND_MUSHROOM"
+    assert mushrooms.placements["second_half"].price_cents == 375
+
+    response = square_app.test_client().get("/")
+    html = response.get_data(as_text=True)
+    assert html.count('id="additions-fieldset"') == 1
+    assert "<legend>Additions <span>Optional</span></legend>" in html
+    assert "Whole Pie Additions" not in [
+        group.name for group in item.modifier_groups
+    ]
+    assert "First Half Pie Additions" not in [
+        group.name for group in item.modifier_groups
+    ]
+    assert "Second Half Pie Additions" not in [
+        group.name for group in item.modifier_groups
+    ]
+
+
+def test_square_unlimited_modifier_sentinel_never_becomes_negative_limit(square_app):
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_PLAIN"]
+    )
+    group = item.modifier_groups[0]
+
+    assert group.public_dict()["max_selected"] is None
+    javascript = square_app.test_client().get("/static/app.js").get_data(as_text=True)
+    assert "group.max_selected > 0" in javascript
+    assert "Choose up to -1" not in javascript
+
+
+def test_square_unlimited_modifier_group_accepts_multiple_options(square_app):
+    client = square_app.test_client()
+    response = client.post(
+        "/api/cart",
+        json={
+            "item_id": "VAR_PLAIN",
+            "quantity": 1,
+            "modifier_selections": {
+                "PREFERENCES": ["MOD_DOUBLE_CUT", "MOD_NO_BASIL"]
+            },
+        },
+        headers={"X-CSRF-Token": csrf(client)},
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["lines"][0]["modifiers"] == [
+        "Preferences: Double Cut",
+        "Preferences: No Basil",
+    ]
 
 
 def test_square_checkout_creates_scheduled_order_and_payment(square_app):

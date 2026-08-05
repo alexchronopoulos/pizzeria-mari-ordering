@@ -17,6 +17,14 @@
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 
+  const setBackgroundImage = (element, url) => {
+    element.style.backgroundImage = url ? `url(${JSON.stringify(url)})` : '';
+  };
+
+  document.querySelectorAll('.menu-photo[data-image-url]').forEach((photo) => {
+    setBackgroundImage(photo, photo.dataset.imageUrl);
+  });
+
   const api = async (url, options = {}) => {
     const response = await fetch(url, {
       ...options,
@@ -187,11 +195,9 @@
       document.querySelector('#item-description').textContent = activeItem.description;
       const itemArt = document.querySelector('#item-art');
       itemArt.className = activeItem.image_url
-        ? 'pizza-art pizza-large item-photo'
-        : `pizza-art pizza-${activeItem.art} pizza-large`;
-      itemArt.style.backgroundImage = activeItem.image_url
-        ? `url(${JSON.stringify(activeItem.image_url)})`
-        : '';
+        ? 'pizza-art item-photo'
+        : `pizza-art pizza-${activeItem.art}`;
+      setBackgroundImage(itemArt, activeItem.image_url);
       document.querySelector('#additions-fieldset').hidden = activeItem.additions.length === 0;
       document.querySelector('#item-additions').innerHTML = activeItem.additions.map((addition) => `
         <div class="addition-row" data-addition-id="${escapeHtml(addition.id)}">
@@ -206,11 +212,12 @@
       `).join('');
       document.querySelector('#item-modifier-groups').innerHTML = activeItem.modifier_groups.map((group) => {
         const requirement = group.min_selected > 0 ? 'Required' : 'Optional';
-        const limit = group.max_selected
+        const hasSelectionLimit = Number.isInteger(group.max_selected) && group.max_selected > 0;
+        const limit = hasSelectionLimit
           ? `Choose up to ${group.max_selected}`
           : 'Choose any that apply';
         return `
-          <fieldset class="modifier-list square-modifier-group" data-modifier-group="${escapeHtml(group.id)}" data-selection-type="${escapeHtml(group.selection_type)}" data-max-selected="${group.max_selected ?? ''}">
+          <fieldset class="modifier-list square-modifier-group" data-modifier-group="${escapeHtml(group.id)}" data-selection-type="${escapeHtml(group.selection_type)}" data-min-selected="${Math.max(0, group.min_selected)}" data-max-selected="${hasSelectionLimit ? group.max_selected : ''}">
             <legend>${escapeHtml(group.name)} <span>${requirement}</span></legend>
             <p>${limit}</p>
             <div class="square-modifier-options">
@@ -294,6 +301,14 @@
     const modifierSelections = Object.fromEntries(
       [...selectedGroups.entries()].map(([groupId, optionIds]) => [groupId, [...optionIds]]),
     );
+    const incompleteGroup = activeItem.modifier_groups.find((group) => (
+      (selectedGroups.get(group.id)?.size || 0) < Math.max(0, group.min_selected)
+    ));
+    if (incompleteGroup) {
+      itemError.textContent = `Choose at least ${incompleteGroup.min_selected} option${incompleteGroup.min_selected === 1 ? '' : 's'} for ${incompleteGroup.name}.`;
+      itemError.hidden = false;
+      return;
+    }
     try {
       const cart = await api('/api/cart', {
         method: 'POST',

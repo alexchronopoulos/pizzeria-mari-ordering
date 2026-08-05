@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from collections.abc import Mapping
 
 from flask import Flask, g
 from dotenv import load_dotenv
@@ -19,19 +20,32 @@ from .square import (
 )
 
 
-def _csv_setting(name: str, default: str) -> tuple[str, ...]:
+APP_VERSION = "0.11.0"
+
+
+def _csv_setting(
+    environment: Mapping[str, str],
+    name: str,
+    default: str,
+) -> tuple[str, ...]:
     return tuple(
         value.strip()
-        for value in os.environ.get(name, default).split(",")
+        for value in environment.get(name, default).split(",")
         if value.strip()
     )
 
 
 def create_app(test_config: dict | None = None) -> Flask:
-    load_dotenv()
+    testing = bool(test_config and test_config.get("TESTING"))
+    if not testing:
+        load_dotenv()
 
-    demo_mode = os.environ.get("DEMO_MODE", "true").lower() == "true"
-    configured_secret = os.environ.get("SECRET_KEY", "").strip()
+    # Tests must be reproducible on machines that have a real Square .env.
+    # Integration tests opt into Square explicitly through test_config.
+    environment: Mapping[str, str] = {} if testing else os.environ
+
+    demo_mode = environment.get("DEMO_MODE", "true").lower() == "true"
+    configured_secret = environment.get("SECRET_KEY", "").strip()
 
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
@@ -42,7 +56,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         DEMO_MODE=demo_mode,
         DEBUG=(
             demo_mode
-            and os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+            and environment.get("FLASK_DEBUG", "false").lower() == "true"
         ),
         MAX_CONTENT_LENGTH=32 * 1024,
         SESSION_COOKIE_HTTPONLY=True,
@@ -54,33 +68,41 @@ def create_app(test_config: dict | None = None) -> Flask:
         CART_TOTAL_LIMIT=8,
         CATEGORY_LIMITS={"pizza": 3},
         SALES_TAX_RATE=0.08,
+        APP_VERSION=APP_VERSION,
         SERVICE_HOURS={
             3: ("16:00", "20:00"),  # Thursday
             4: ("16:00", "20:00"),  # Friday
             5: ("11:00", "20:00"),  # Saturday
             6: ("11:00", "16:00"),  # Sunday
         },
-        SQUARE_ENVIRONMENT=os.environ.get("SQUARE_ENVIRONMENT", "sandbox").lower(),
-        SQUARE_CATALOG_ENABLED=os.environ.get(
+        SQUARE_ENVIRONMENT=environment.get("SQUARE_ENVIRONMENT", "sandbox").lower(),
+        SQUARE_CATALOG_ENABLED=environment.get(
             "SQUARE_CATALOG_ENABLED", "false"
         ).lower()
         == "true",
-        SQUARE_APPLICATION_ID=os.environ.get("SQUARE_APPLICATION_ID", "").strip(),
-        SQUARE_LOCATION_ID=os.environ.get("SQUARE_LOCATION_ID", "").strip(),
-        SQUARE_ACCESS_TOKEN=os.environ.get("SQUARE_ACCESS_TOKEN", "").strip(),
-        SQUARE_API_VERSION=os.environ.get(
+        SQUARE_APPLICATION_ID=environment.get("SQUARE_APPLICATION_ID", "").strip(),
+        SQUARE_LOCATION_ID=environment.get("SQUARE_LOCATION_ID", "").strip(),
+        SQUARE_ACCESS_TOKEN=environment.get("SQUARE_ACCESS_TOKEN", "").strip(),
+        SQUARE_API_VERSION=environment.get(
             "SQUARE_API_VERSION", SQUARE_API_VERSION
         ).strip(),
         SQUARE_ALLOWED_CATEGORY_NAMES=_csv_setting(
+            environment,
             "SQUARE_ALLOWED_CATEGORY_NAMES",
             "Seasonal Special Pies,Traditional Pies,Mari Pies",
         ),
         SQUARE_PIZZA_CATEGORY_NAMES=_csv_setting(
+            environment,
             "SQUARE_PIZZA_CATEGORY_NAMES",
             "Seasonal Special Pies,Traditional Pies,Mari Pies",
         ),
+        SQUARE_EXCLUDED_MODIFIER_LIST_NAMES=_csv_setting(
+            environment,
+            "SQUARE_EXCLUDED_MODIFIER_LIST_NAMES",
+            "Sides & Desserts,Drinks",
+        ),
         SQUARE_CATALOG_CACHE_SECONDS=int(
-            os.environ.get("SQUARE_CATALOG_CACHE_SECONDS", "30")
+            environment.get("SQUARE_CATALOG_CACHE_SECONDS", "30")
         ),
     )
 
@@ -139,6 +161,9 @@ def create_app(test_config: dict | None = None) -> Flask:
                 app.config["SQUARE_ALLOWED_CATEGORY_NAMES"]
             ),
             pizza_category_names=tuple(app.config["SQUARE_PIZZA_CATEGORY_NAMES"]),
+            excluded_modifier_list_names=tuple(
+                app.config["SQUARE_EXCLUDED_MODIFIER_LIST_NAMES"]
+            ),
             cache_seconds=app.config["SQUARE_CATALOG_CACHE_SECONDS"],
         )
         app.extensions["square_commerce"] = SquareCommerce(
@@ -160,7 +185,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.context_processor
     def inject_csp_nonce() -> dict:
-        return {"csp_nonce": g.get("csp_nonce", "")}
+        return {
+            "csp_nonce": g.get("csp_nonce", ""),
+            "asset_version": app.config["APP_VERSION"],
+        }
 
     @app.after_request
     def add_security_headers(response):

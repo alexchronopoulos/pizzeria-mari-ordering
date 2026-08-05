@@ -32,17 +32,19 @@
                 {% if not item.available %}disabled{% endif %}
                 aria-label="Select {{ item.name }}"
               >
+                <span class="menu-card-media" aria-hidden="true">
+                  {% if item.image_url %}
+                    <span class="menu-photo" data-image-url="{{ item.image_url }}"></span>
+                  {% else %}
+                    <span class="pizza-art pizza-{{ item.art }}"></span>
+                  {% endif %}
+                </span>
                 <span class="menu-card-copy">
                   <strong>{{ item.name }}</strong>
                   <span>{{ item.description }}</span>
                   <span class="price">${{ '%.2f'|format(item.price_cents / 100) }}</span>
                   {% if not item.available %}<em>Out of stock</em>{% endif %}
                 </span>
-                {% if item.image_url %}
-                  <span class="menu-photo"><img src="{{ item.image_url }}" alt=""></span>
-                {% else %}
-                  <span class="pizza-art pizza-{{ item.art }}" aria-hidden="true"></span>
-                {% endif %}
               </button>
             {% endfor %}
           </div>
@@ -75,16 +77,16 @@
 {% include "_pickup_dialog.html" %}
 
 <dialog class="modal item-modal" id="item-dialog">
-  <div class="modal-header">
-    <div>
-      <span class="eyebrow" id="item-category"></span>
-      <h2 id="item-name"></h2>
-    </div>
+  <div class="item-detail-media">
+    <div class="pizza-art pizza-plain" id="item-art" aria-hidden="true"></div>
     <button class="icon-button" data-close-dialog="item-dialog" aria-label="Close">×</button>
+  </div>
+  <div class="item-modal-heading">
+    <span class="eyebrow" id="item-category"></span>
+    <h2 id="item-name"></h2>
   </div>
   <p class="modal-lede" id="item-description"></p>
   <div class="item-modal-row">
-    <div class="pizza-art pizza-plain pizza-large" id="item-art" aria-hidden="true"></div>
     <div>
       <span class="eyebrow">Quantity</span>
       <div class="quantity-control">
@@ -115,5 +117,5 @@
     "selectedDate": selected.iso[:10] if selected else none
   }|tojson }};
 </script>
-<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js') }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js', v=asset_version) }}" defer></script>
 {% endblock %}

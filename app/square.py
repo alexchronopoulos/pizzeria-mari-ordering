@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import time
 import uuid
@@ -30,13 +31,6 @@ SQUARE_JS_URLS = {
     "sandbox": "https://sandbox.web.squarecdn.com/v1/square.js",
     "production": "https://web.squarecdn.com/v1/square.js",
 }
-PLACEMENT_LISTS = {
-    "whole pie additions": "whole",
-    "first half pie additions": "first_half",
-    "second half pie additions": "second_half",
-}
-
-
 class SquareAPIError(RuntimeError):
     def __init__(
         self,
@@ -272,6 +266,61 @@ def _addition_key(name: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
+def _normalized_name(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def _canonical_addition_name(value: str) -> str:
+    """Normalize harmless placement text used in parallel Square lists."""
+    words = _normalized_name(value).split()
+    placement_words = {
+        "whole",
+        "pie",
+        "pizza",
+        "first",
+        "1st",
+        "second",
+        "2nd",
+        "half",
+    }
+    reduced = [word for word in words if word not in placement_words]
+    return " ".join(reduced) or " ".join(words)
+
+
+def _placement_for_list_name(name: str) -> str | None:
+    """Recognize Square addition-list names without requiring exact punctuation."""
+    words = set(_normalized_name(name).split())
+    if not words.intersection({"addition", "additions"}):
+        return None
+    if "whole" in words:
+        return "whole"
+    if "half" in words and words.intersection({"first", "1st"}):
+        return "first_half"
+    if "half" in words and words.intersection({"second", "2nd"}):
+        return "second_half"
+    return None
+
+
+def _selection_limits(
+    info: dict, list_data: dict, selection_type: str
+) -> tuple[int, int | None]:
+    """Resolve Square's item overrides, including its -1 inheritance sentinel."""
+    item_min = int(info.get("min_selected_modifiers", -1))
+    item_max = int(info.get("max_selected_modifiers", -1))
+    if item_min == -1 and item_max == -1:
+        raw_min = int(list_data.get("min_selected_modifiers", 0))
+        raw_max = int(list_data.get("max_selected_modifiers", 0))
+    else:
+        raw_min = item_min
+        raw_max = item_max
+
+    min_selected = max(0, raw_min)
+    max_selected = raw_max if raw_max > 0 else None
+    if selection_type == "SINGLE":
+        max_selected = 1
+    return min_selected, max_selected
+
+
 class SquareCatalogProvider:
     def __init__(
         self,
@@ -280,12 +329,16 @@ class SquareCatalogProvider:
         location_id: str,
         allowed_category_names: tuple[str, ...],
         pizza_category_names: tuple[str, ...],
+        excluded_modifier_list_names: tuple[str, ...] = (),
         cache_seconds: int = 30,
     ) -> None:
         self.client = client
         self.location_id = location_id
         self.allowed_category_names = allowed_category_names
         self.pizza_category_names = set(pizza_category_names)
+        self.excluded_modifier_list_names = {
+            _normalized_name(name) for name in excluded_modifier_list_names
+        }
         self.cache_seconds = cache_seconds
         self._cached: MenuSnapshot | None = None
         self._cached_at = 0.0
@@ -429,7 +482,7 @@ class SquareCatalogProvider:
     def _modifiers(
         self, infos: list[dict], modifier_lists: dict[str, dict]
     ) -> tuple[tuple[Addition, ...], tuple[ModifierGroup, ...]]:
-        addition_map: dict[str, dict] = {}
+        addition_lists: dict[str, list[ModifierOption]] = {}
         groups: list[ModifierGroup] = []
         for info in infos:
             if info.get("enabled") is False:
@@ -439,7 +492,9 @@ class SquareCatalogProvider:
                 continue
             list_data = modifier_list.get("modifier_list_data", {})
             list_name = list_data.get("name", "Options").strip()
-            placement = PLACEMENT_LISTS.get(" ".join(list_name.casefold().split()))
+            if _normalized_name(list_name) in self.excluded_modifier_list_names:
+                continue
+            placement = _placement_for_list_name(list_name)
             overrides = {
                 override.get("modifier_id"): override
                 for override in info.get("modifier_overrides", [])
@@ -449,6 +504,8 @@ class SquareCatalogProvider:
                 if not _present_at_location(modifier, self.location_id):
                     continue
                 modifier_data = modifier.get("modifier_data", {})
+                if modifier_data.get("hidden_online"):
+                    continue
                 if _sold_out(modifier_data, self.location_id):
                     continue
                 price = _price_cents(modifier_data, self.location_id)
@@ -465,44 +522,68 @@ class SquareCatalogProvider:
                     ),
                 )
                 if placement:
-                    key = " ".join(option.name.casefold().split())
-                    entry = addition_map.setdefault(
-                        key,
-                        {
-                            "id": _addition_key(option.name),
-                            "name": option.name,
-                            "placements": {},
-                        },
-                    )
-                    entry["placements"][placement] = option
+                    addition_lists.setdefault(placement, []).append(option)
                 else:
                     options.append(option)
 
             if not placement and options:
                 selection_type = list_data.get("selection_type", "MULTIPLE")
-                max_selected = info.get("max_selected_modifiers")
-                if max_selected is None and selection_type == "SINGLE":
-                    max_selected = 1
+                min_selected, max_selected = _selection_limits(
+                    info, list_data, selection_type
+                )
                 groups.append(
                     ModifierGroup(
                         id=modifier_list["id"],
                         name=list_name,
                         selection_type=selection_type,
-                        min_selected=int(info.get("min_selected_modifiers", 0)),
-                        max_selected=(int(max_selected) if max_selected is not None else None),
+                        min_selected=min_selected,
+                        max_selected=max_selected,
                         options=tuple(options),
                     )
                 )
 
-        additions = tuple(
-            Addition(
-                id=entry["id"],
-                name=entry["name"],
-                placements=entry["placements"],
+        # The whole-pie list is the customer-facing source of truth. The half
+        # lists provide alternate Square IDs and prices for those same options;
+        # they must never create duplicate or half-only rows in the UI.
+        half_lists = {
+            placement: addition_lists.get(placement, [])
+            for placement in ("first_half", "second_half")
+        }
+        placement_indexes = {
+            placement: {
+                _canonical_addition_name(option.name): option
+                for option in options
+            }
+            for placement, options in half_lists.items()
+        }
+        additions = []
+        whole_options = addition_lists.get("whole", [])
+        for index, whole_option in enumerate(whole_options):
+            key = _canonical_addition_name(whole_option.name)
+            placements = {"whole": whole_option}
+            for placement in ("first_half", "second_half"):
+                half_option = placement_indexes[placement].get(key)
+                # Square merchants commonly keep the three parallel lists in
+                # the same order while adding placement wording to option
+                # names. If the names still do not normalize to the same key,
+                # aligned lists provide a safe final correspondence.
+                placement_options = half_lists[placement]
+                if (
+                    not half_option
+                    and len(placement_options) == len(whole_options)
+                    and index < len(placement_options)
+                ):
+                    half_option = placement_options[index]
+                if half_option:
+                    placements[placement] = half_option
+            additions.append(
+                Addition(
+                    id=_addition_key(whole_option.name),
+                    name=whole_option.name,
+                    placements=placements,
+                )
             )
-            for entry in addition_map.values()
-        )
-        return additions, tuple(groups)
+        return tuple(additions), tuple(groups)
 
 
 class CheckoutLockManager:
