@@ -38,7 +38,11 @@
                   <span class="price">${{ '%.2f'|format(item.price_cents / 100) }}</span>
                   {% if not item.available %}<em>Out of stock</em>{% endif %}
                 </span>
-                <span class="pizza-art pizza-{{ item.art }}" aria-hidden="true"></span>
+                {% if item.image_url %}
+                  <span class="menu-photo"><img src="{{ item.image_url }}" alt=""></span>
+                {% else %}
+                  <span class="pizza-art pizza-{{ item.art }}" aria-hidden="true"></span>
+                {% endif %}
               </button>
             {% endfor %}
           </div>
@@ -90,18 +94,19 @@
       </div>
     </div>
   </div>
-  <fieldset class="modifier-list addition-picker">
+  <fieldset class="modifier-list addition-picker" id="additions-fieldset">
     <legend>Additions <span>Optional</span></legend>
     <p>Choose an addition, then place it on the whole pie or either half.</p>
     <div id="item-additions"></div>
   </fieldset>
+  <div id="item-modifier-groups"></div>
   <p class="form-error" id="item-error" hidden></p>
   <button class="button button-primary button-block" id="add-to-cart">
     <span id="add-to-cart-label">Add to order</span><span id="item-price"></span>
   </button>
 </dialog>
 
-<script>
+<script nonce="{{ csp_nonce }}">
   window.PIZZERIA_DATA = {{ {
     "menu": menu_json,
     "cart": cart_payload,
@@ -110,5 +115,5 @@
     "selectedDate": selected.iso[:10] if selected else none
   }|tojson }};
 </script>
-<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js') }}" defer></script>
 {% endblock %}

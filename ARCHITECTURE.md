@@ -1,102 +1,105 @@
 # Production architecture
 
-## Core decision
+## System of record
 
-Square remains the operational system of record for catalog items, modifiers, taxes, payments, and paid pickup orders. The custom Flask portal owns the customer experience, cart rules, and pickup-slot capacity.
+Square owns every piece of durable business data:
 
-This means a paid portal order appears in Square and remains visible to the existing Pizzeria Mari Production Dashboard. Staff do not need to operate a second order-management system.
+- catalog categories, items, variations, descriptions, images, prices, availability, and modifiers;
+- taxes and automatic catalog discounts;
+- buyers associated with payments;
+- scheduled pickup orders, order notes, payments, tips, and receipt URLs;
+- the order history used to calculate how many pizzas are already assigned to a pickup slot.
 
-## Capacity model
+Flask owns only presentation and rules. Its signed browser cookie contains the current cart and pickup selection. No application database contains catalog, cart, customer, payment, or order records.
 
-Each pickup slot has an independent counter for each configured capacity category. Initially only `pizza` needs a slot capacity:
+The only production-side state outside Square is an expiring concurrency lease. A lease is coordination, not a business-data copy: it contains a pickup-slot key, a random owner value, and an expiry timestamp.
 
-```text
-2026-08-06T16:15:00-04:00
-  pizza capacity: 3
-  held: 1
-  confirmed: 1
-  available: 1
-```
+## Capacity calculation
 
-The same cart can also enforce:
+For a requested pickup time, the app searches Square orders for the configured location, keeps scheduled pickup fulfillments for that exact time, and counts line-item quantities whose Square variation IDs belong to configured pizza categories.
 
-- a per-category maximum, such as no more than three pizzas;
-- a total-item maximum, such as no more than eight items across pizzas, salads, cookies, sides, and drinks.
+The customer sees only whether the time can fit the current cart. Full times stay visible as `Full`; partially occupied times that cannot fit the current cart stay visible as `Unavailable`. Remaining production counts are never returned to the browser.
 
-Both rules are checked in the browser for fast feedback and again on the server. The browser is never trusted as the final authority.
+Cart-wide and per-category limits are checked in the browser for immediate feedback and checked again against the current Square catalog on the server.
 
-## Safe checkout sequence
+## Safe concurrent checkout
 
-Capacity must be claimed before payment without overselling the last pizza spot.
+Square does not offer an atomic “create this order only if category capacity remains” operation. A short-lived per-slot lease closes that gap across redundant application instances:
 
-1. Recalculate the cart from current Square catalog IDs and server-side prices.
-2. Use one DynamoDB transaction to create a short-lived checkout hold and increment the slot's held pizza count only if `held + confirmed + requested <= 3`.
-3. Create a scheduled Square pickup order containing catalog-backed line items, modifiers, customer details, pickup time, prep time, and order notes.
-4. Tokenize the card in the browser with Square Web Payments SDK. Raw card data never reaches Flask.
-5. Create the Square payment with the order ID, tip, buyer email, and an idempotency key. Use delayed capture while the capacity hold is finalized.
-6. Convert the hold to confirmed capacity in a DynamoDB transaction and complete the Square payment.
-7. If any step fails, cancel the authorization and release the hold using idempotent compensation logic.
-8. Process Square payment and order webhooks to reconcile interrupted requests.
-9. Send the confirmation only after paid status is verified.
+1. Tokenize card details in the browser with Square Web Payments SDK. Raw card data never reaches Flask.
+2. Acquire the DynamoDB lease for the selected pickup slot with a conditional write.
+3. Re-read scheduled orders from Square and reject checkout if the cart no longer fits.
+4. Ask Square to calculate the current catalog price, taxes, and automatic discounts.
+5. Create an open Square order with catalog variation IDs, catalog modifier IDs, buyer details, notes, and scheduled pickup fulfillment. Its idempotency key is unique to the browser checkout attempt.
+6. Verify that Square's created order total matches the amount the buyer reviewed.
+7. Create one Square payment referencing that order and using a second idempotency key. Staff gratuity is sent as `tip_money`.
+8. On a definite payment failure, cancel the unpaid Square order before releasing the lease.
+9. On success, release the lease. The paid Square order is now the durable capacity record.
+10. If the payment result is ambiguous because of a network failure, leave the Square order intact, release only after reconciliation, and favor temporarily blocking capacity over overselling it.
 
-Expired holds are released both lazily during slot reads and by a once-per-minute cleanup task. DynamoDB TTL can remove old records later, but TTL deletion is not used as the immediate capacity-release mechanism.
+Because every checkout for the same slot holds the same lease while it checks capacity and creates its Square order, a second checkout sees the first order before it can make its own capacity decision.
 
-## DynamoDB records
+## DynamoDB lease shape
 
-A single-table design is sufficient at this scale:
+Only one record type is required:
 
-| Record | Partition key | Sort key | Purpose |
-| --- | --- | --- | --- |
-| Slot | `SLOT#<service_at>` | `CAPACITY` | Capacity, held count, confirmed count, version |
-| Hold | `SLOT#<service_at>` | `HOLD#<uuid>` | Requested category counts, status, expiry |
-| Order | `ORDER#<uuid>` | `ORDER` | Customer, cart snapshot, Square IDs, payment state |
-| Idempotency | `IDEMPOTENCY#<key>` | `REQUEST` | Safe retries and duplicate-submit protection |
+| Field | Example | Purpose |
+| --- | --- | --- |
+| Partition key | `SLOT#2026-08-06T16:15:00-04:00` | One lock per pickup slot |
+| Owner | random UUID | Prevents one request from releasing another's lease |
+| Expires at | Unix timestamp | Recovers abandoned leases |
 
-The slot update uses a conditional expression. Only one concurrent checkout can claim the last remaining capacity.
+No customer name, email, phone, cart, catalog object, amount, payment ID, or order ID is stored in DynamoDB.
 
 ## Square responsibilities
 
-- Catalog API: load only explicitly allowed category IDs and their items, variations, modifiers, availability, and prices.
-- Modifier lists: normalize Square's whole-pie and half-pie modifier groups into one placement picker in the customer UI, then map the selection back to the correct Square Catalog modifier ID.
-- Orders API: create one scheduled `PICKUP` fulfillment, apply Square-backed taxes and catalog discounts, and verify the returned order total before payment.
-- Web Payments SDK: secure browser-side card entry and tokenization.
-- Payments and Gift Cards APIs: include `order_id`, `tip_money`, `buyer_email_address`, gift-card tender when used, and a unique idempotency key.
-- Webhooks: reconcile payments and order changes even if a customer closes the browser at an awkward moment.
+- Catalog API loads only explicitly allowed regular categories and their items, variations, images, sold-out state, and attached modifier lists.
+- Square's three addition-placement modifier lists are normalized into one picker, then mapped back to the exact modifier catalog ID at order creation.
+- CalculateOrder supplies taxes and automatic catalog discounts shown at checkout.
+- Orders API creates the scheduled `PICKUP` fulfillment.
+- Web Payments SDK securely renders card entry and creates a single-use token.
+- Payments API charges the card, records the staff tip, associates the payment with the order, and returns the receipt URL.
+- SearchOrders supplies durable pickup-slot usage.
+- Webhooks reconcile interrupted requests and external Square order changes.
 
 ## AWS deployment
 
-The preferred deployment is Flask on Lambda behind an API Gateway HTTP API. DynamoDB on-demand provides the shared state needed by concurrent Lambda instances. Amazon SES sends confirmation messages.
+- API Gateway HTTP API terminates HTTPS.
+- Lambda runs Flask across redundant infrastructure.
+- DynamoDB on-demand provides only the expiring checkout lease.
+- SES sends a confirmation containing Square's receipt URL without persisting recipient or order data.
+- EventBridge triggers reconciliation for ambiguous attempts if webhooks do not resolve them first.
+- CloudWatch alarms on payment, webhook, catalog, and lease failures.
 
-This is a better fit than a single inexpensive virtual server because the latter is not redundant. Two EC2 instances plus a load balancer and a redundant SQL database would cost materially more at this traffic level.
+This keeps idle cost very low while removing the single-host failure mode. There is no SQL database and no duplicated application-side order store.
 
 ## Delivery phases
 
-### Phase 1 — experience prototype
+### Completed — interface and local rules
 
-- Approve the menu, pickup-time, item-modal, cart, and checkout experience.
-- Confirm the exact cart-wide limit and which categories consume pickup capacity.
-- Replace the CSS pizza stand-ins with the user's product photography and branding assets.
+- Menu, pickup-time, item modal, cart, checkout, tip, notes, and full-slot experience.
+- Three-pizza cart and slot behavior.
+- Branding, fonts, responsive layout, public-repository safeguards, and automated tests.
 
-### Phase 2 — Square Sandbox
+### Current — Square connection
 
-- Connect Catalog, Orders, Web Payments, and Payments APIs.
-- Create the first paid scheduled order in Square Sandbox.
-- Confirm that its fields appear correctly in the Production Dashboard parser.
+- Live Catalog parsing and exact-category filtering.
+- Square modifier normalization and server validation.
+- Square order-derived slot counts.
+- Square pricing, scheduled order creation, Web Payments card tokenization, and idempotent payment creation.
+- Sandbox test coverage with no real credentials in the repository.
 
-### Phase 3 — production capacity
+### Next — production concurrency and reconciliation
 
-- Add DynamoDB holds and conditional slot counters.
-- Add webhook reconciliation and automatic expired-hold release.
-- Stress-test simultaneous claims for the last slot.
+- DynamoDB lease implementation.
+- Payment and order webhooks.
+- Ambiguous-payment reconciliation and operational alerts.
+- Confirmation email containing the Square receipt link.
+- Gift-card split tender and the final coupon policy.
 
-### Phase 4 — AWS and email
+### Final — controlled launch
 
 - Deploy with infrastructure as code.
-- Verify the sending domain in SES and create branded receipts.
-- Add monitoring, backups, budget alerts, and an operational rollback procedure.
-
-### Phase 5 — controlled launch
-
-- Run live payments with a private or unlinked URL.
-- Compare the custom portal's orders against Square and the Production Dashboard.
-- Move the public ordering link only after totals, taxes, tips, slots, and receipts reconcile.
+- Exercise simultaneous last-slot claims.
+- Reconcile taxes, tips, receipts, order notes, and Production Dashboard output.
+- Run live payments at a private URL before changing the public ordering link.

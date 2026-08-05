@@ -7,12 +7,11 @@ from app import create_app
 
 
 @pytest.fixture()
-def app(tmp_path):
+def app():
     return create_app(
         {
             "TESTING": True,
             "SECRET_KEY": "test",
-            "DATABASE": str(tmp_path / "test.sqlite3"),
             "TEST_NOW": datetime(
                 2026, 8, 4, 12, tzinfo=ZoneInfo("America/New_York")
             ),

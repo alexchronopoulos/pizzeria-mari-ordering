@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Ordering temporarily unavailable · Pizzeria Mari{% endblock %}
+{% block body %}
+<main class="confirmation-shell">
+  <section class="confirmation-card">
+    <span class="eyebrow">Ordering temporarily unavailable</span>
+    <h1>We couldn’t reach the menu.</h1>
+    <p>{{ error }}</p>
+    <a class="button button-primary" href="{{ url_for('storefront.index') }}">Try again</a>
+  </section>
+</main>
+{% endblock %}

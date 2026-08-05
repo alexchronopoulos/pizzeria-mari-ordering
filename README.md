@@ -1,120 +1,128 @@
 # Pizzeria Mari Ordering
 
-An intentionally simple Flask ordering portal with category-aware cart limits and true per-slot pizza capacity.
+A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-This first iteration is a local prototype. It reproduces the important parts of the existing Square storefront, makes the pickup date and time much more prominent, and implements the capacity rule that Square Online cannot express.
+## Current v0.7 capabilities
 
-## What works now
+- Orders through seven days in advance with configured 15-minute pickup times.
+- Three-pizza cart and slot limits, plus a configurable eight-item overall limit.
+- Full pickup times remain visible and clearly labeled instead of disappearing.
+- Compagnon display type, Semplicita body type, Pizzeria Mari colors, and responsive layouts.
+- Quantity controls on the menu and checkout, with preventative limit feedback.
+- Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
+- One compact addition picker assembled from Square's Whole Pie Additions, First Half Pie Additions, and Second Half Pie Additions lists.
+- Every other modifier list attached to an item is rendered and validated automatically.
+- Square-calculated taxes and automatic catalog discounts.
+- Square Web Payments SDK card tokenization; raw card details never reach Flask.
+- Scheduled Square pickup orders with the buyer, pickup time, notes, catalog-backed items, and catalog-backed modifiers.
+- Square Payments API charges with a 15% default tip, custom tips, order ID, buyer email, and idempotency keys.
+- Square scheduled orders are queried to calculate slot usage; no catalog, customer, payment, or order database exists in the app.
+- The cart and pickup choice live only in Flask's signed browser-session cookie.
 
-- Server-rendered Flask storefront with responsive desktop and mobile layouts.
-- Only the configured menu categories are shown.
-- Current Pizzeria Mari hours and 15-minute pickup slots.
-- Ordering from today through seven days in advance.
-- The selected pickup day and time remain visible on both the menu and checkout.
-- Pickup time can be changed in place from checkout without returning to the menu.
-- Configurable cart-wide and capacity-category limits.
-- A default limit of three pizzas per cart.
-- Quantity controls on both the menu cart and checkout order summary.
-- Item quantity controls stop at the remaining cart allowance, with the three-pizza maximum reinforced on the Add to Order button.
-- A default limit of three confirmed pizzas per pickup slot.
-- Slots remain open internally until all three pizza positions are claimed; every scheduled time remains visible, while times that cannot accommodate the cart are disabled and full times are clearly labeled without exposing production counts.
-- Server-side capacity enforcement inside a SQLite write transaction, preventing two local checkouts from both claiming the final capacity.
-- Branded logo with Compagnon for display headings and Semplicita for body copy.
-- One compact additions picker with whole-pie, first-half, and second-half placement instead of three repetitive modifier lists.
-- Item preferences are not duplicated in the prototype; item-specific choices will come directly from Square modifier lists.
-- Server-validated modifier selections and modifier pricing.
-- Guest checkout fields for name, email, phone, coupon/gift card code, tip, and order notes.
-- An 8% configurable Rensselaer County sales-tax calculation, a preselected 15% tip, and a custom tip amount.
-- A clearly labeled demo checkout and confirmation screen.
+The local demo uses temporary in-memory slot counters that disappear on restart. Live Square mode does not use them.
 
-## What is intentionally simulated
+## Safe first Square connection
 
-The prototype does not charge a card, validate coupon or gift card codes, write an order to Square, send an email, or deploy to AWS. Those actions require credentials and should only be added after the experience and capacity rules are approved.
-
-The production integration is designed to:
-
-1. Read allowed categories, items, variations, and modifiers from the existing Square Catalog.
-2. Atomically hold the requested pizza capacity for a short checkout window.
-3. Create a scheduled Square pickup order with the customer's name, phone, pickup time, and notes.
-4. Tokenize payment details with Square's Web Payments SDK.
-5. Authorize and capture the payment with an idempotency key and the Square order ID.
-6. Convert the temporary capacity hold into a confirmed reservation.
-7. Send a branded confirmation through Amazon SES and reconcile payment/order state through Square webhooks.
-
-## Run locally
-
-Python 3.12 or newer is recommended.
+Python 3.12 or newer and `uv` are recommended.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
 cp .env.example .env
-python run.py
+uv sync --extra dev
+uv run pytest
 ```
 
-Then open `http://127.0.0.1:5000`.
+Create an application in the [Square Developer Console](https://developer.squareup.com/apps), then copy its Application ID, Access Token, and Location ID into the ignored `.env` file. Never paste the access token into source code, Git, chat, browser JavaScript, or a public issue.
 
-Before using anything other than demo mode, generate a private Flask session key and put it in `.env`:
+To inspect a real Square catalog without creating orders or charging cards, use:
+
+```dotenv
+DEMO_MODE=true
+SQUARE_CATALOG_ENABLED=true
+SQUARE_ENVIRONMENT=production
+SQUARE_APPLICATION_ID=your-production-application-id
+SQUARE_LOCATION_ID=your-production-location-id
+SQUARE_ACCESS_TOKEN=your-production-access-token
+```
+
+Then start the site:
+
+```bash
+uv run python run.py
+```
+
+This read-only/demo combination pulls the real menu, modifiers, Square pricing, and existing scheduled-order capacity while leaving checkout simulated. It is the recommended first connection.
+
+## Square Sandbox checkout
+
+Square Sandbox has a separate catalog from the production Square account. The configured categories and items must exist in the Sandbox test account before its catalog IDs can be used in Sandbox orders.
+
+Set the Developer Console to Sandbox, copy the Sandbox credentials into `.env`, generate a private Flask secret, and use:
+
+```dotenv
+DEMO_MODE=false
+SECRET_KEY=generate-a-long-random-value
+SQUARE_CATALOG_ENABLED=true
+SQUARE_ENVIRONMENT=sandbox
+SQUARE_APPLICATION_ID=your-sandbox-application-id
+SQUARE_LOCATION_ID=your-sandbox-location-id
+SQUARE_ACCESS_TOKEN=your-sandbox-access-token
+```
+
+Generate the secret locally with:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Run tests with:
+Square's [Sandbox test cards](https://developer.squareup.com/docs/devtools/sandbox/payments) can then create paid scheduled orders in the Sandbox account. The Web Payments SDK script and backend API host change automatically with `SQUARE_ENVIRONMENT`.
 
-```bash
-python -m pytest
+Do not set `SQUARE_ENVIRONMENT=production` with `DEMO_MODE=false` until the controlled-launch checklist is complete. Production mode charges real cards.
+
+## Category and menu configuration
+
+These `.env` values select exact Square category names and their display order:
+
+```dotenv
+SQUARE_ALLOWED_CATEGORY_NAMES=Seasonal Special Pies,Traditional Pies,Mari Pies
+SQUARE_PIZZA_CATEGORY_NAMES=Seasonal Special Pies,Traditional Pies,Mari Pies
 ```
 
-## Configuration
+All items in `SQUARE_PIZZA_CATEGORY_NAMES` consume pizza cart and pickup-slot capacity. All other allowed categories appear on the menu and count only toward the overall cart limit.
 
-The initial values live in `app/__init__.py` so they are easy to find:
+Catalog results are held in process memory for 30 seconds by default to keep page loads fast. They are never written to disk:
 
-- `ADVANCE_DAYS`: 7
-- `SLOT_INTERVAL_MINUTES`: 15
-- `PIZZA_SLOT_CAPACITY`: 3
-- `CATEGORY_LIMITS`: `{ "pizza": 3 }`
-- `CART_TOTAL_LIMIT`: 8
-- `SALES_TAX_RATE`: 0.08
-- `SERVICE_HOURS`: Thursday/Friday 4–8, Saturday 11–8, Sunday 11–4
+```dotenv
+SQUARE_CATALOG_CACHE_SECONDS=30
+```
 
-Menu categories, representative prototype items, and temporary addition prices live in `app/menu.py`. Square Catalog data will replace those placeholders during the Sandbox phase.
+The app pins Square API version `2026-07-15` in every request. Upgrade it deliberately after reviewing Square's release notes.
 
-## Git and public-repository safety
+## What remains before production
 
-Run the included setup once from the project directory:
+- A short-lived DynamoDB lease so multiple redundant Lambda instances serialize checkout for the same pickup slot. It will contain only a slot key, random lease owner, and expiry—not menu, cart, customer, payment, or order data.
+- Webhook reconciliation for the rare case where a Square payment succeeds but the browser or network disappears before confirmation.
+- Confirmation email delivery. Square returns a receipt URL but the Payments API does not provide a general “email this receipt” action, so the app will send the Square receipt link through SES without retaining customer data.
+- Coupon and gift-card redemption. The field remains visible but clearly reports that redemption is not connected yet.
+- AWS deployment, monitoring, and a controlled production launch.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the transaction boundary and deployment plan.
+
+## Public Git repository safety
+
+Run this once from the project directory:
 
 ```bash
 bash setup-git.sh
 ```
 
-It initializes a `master` branch, checks every proposed public file for common secret material, installs the same check as a pre-commit hook, stages the source, and creates the initial commit when your Git name and email are configured. The project uses `master` by default to match the existing Pizzeria Mari Dashboard repository.
+It initializes the `master` branch, audits the public file set, installs the pre-commit credential check, and creates the first commit when Git identity is configured. GitHub Actions repeats the audit and all tests on pushes and pull requests.
 
-Create an empty GitHub repository without adding GitHub's README or `.gitignore`, then connect and push it:
+The repository excludes `.env`, databases, virtual environments, caches, logs, keys, downloaded ZIP archives, and licensed font binaries. The public source contains only empty Square placeholders. Keep local font files in `app/static/fonts/`; their expected names are documented in that directory.
 
-```bash
-git remote add origin git@github.com:YOUR-USER/pizzeria-mari-ordering.git
-git push -u origin master
-```
+## References
 
-Local `.env` files, SQLite databases, virtual environments, caches, logs, private-key formats, and downloaded update archives are ignored. GitHub Actions repeats the public-file audit and runs the tests on every push and pull request.
-
-Never place a Square access token, Flask secret key, webhook signature key, or AWS credential in a tracked file. When integrations are added, keep local values in `.env` and production values in the deployment platform's encrypted secret store. Square's server access token must never be sent to browser JavaScript.
-
-The Compagnon and Semplicita font binaries are also excluded from the public repository until their licenses are confirmed to allow source redistribution. Existing local copies continue to work; see `app/static/fonts/README.md` for the required filenames.
-
-## Recommended production shape
-
-Use a serverless AWS deployment:
-
-- API Gateway HTTP API for HTTPS requests.
-- AWS Lambda for the Flask application.
-- DynamoDB on-demand for slot counters, checkout holds, order state, and idempotency records.
-- Amazon SES for confirmation emails.
-- EventBridge for expired-hold cleanup and reconciliation.
-- CloudWatch alarms for failed payments, webhook errors, and capacity inconsistencies.
-
-These services are managed across multiple Availability Zones and have effectively no idle application-server cost. At Pizzeria Mari's likely request volume, the infrastructure should normally cost only a few dollars per month, excluding the domain, Square processing fees, and unusually verbose logs.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the production transaction design and delivery plan.
+- [Square Web Payments SDK quickstart](https://developer.squareup.com/docs/web-payments/quickstart/add-sdk-to-web-client)
+- [Square Catalog API](https://developer.squareup.com/docs/catalog-api/what-it-does)
+- [Create Square orders](https://developer.squareup.com/docs/orders-api/create-orders)
+- [Pay for Square orders](https://developer.squareup.com/docs/orders-api/pay-for-orders)
+- [Square Web Payments content security policy](https://developer.squareup.com/docs/web-payments/content-security-policy)

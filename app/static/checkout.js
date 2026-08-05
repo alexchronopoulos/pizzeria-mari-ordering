@@ -5,6 +5,10 @@
   const slotGrid = document.querySelector('#slot-grid');
   const customTipWrap = document.querySelector('#custom-tip-wrap');
   const customTipInput = document.querySelector('#custom-tip');
+  const checkoutForm = document.querySelector('#checkout-form');
+  const checkoutButton = document.querySelector('.checkout-submit');
+  const paymentStatus = document.querySelector('#payment-status');
+  let squareCard = null;
 
   const escapeHtml = (value) => String(value)
     .replaceAll('&', '&amp;')
@@ -38,19 +42,47 @@
       tipCents = Math.max(0, Math.round((Number.parseFloat(customTipInput.value) || 0) * 100));
       label = 'Custom';
     } else {
-      tipCents = Math.round(data.subtotalCents * Number(choice) / 100);
+      tipCents = Math.round(data.tipBasisCents * Number(choice) / 100);
     }
-    const totalCents = data.subtotalCents + data.taxCents + tipCents;
+    const totalCents = data.orderTotalCents + tipCents;
     document.querySelector('#tip-label').textContent = `(${label})`;
     document.querySelector('#tip-total').textContent = money(tipCents);
     document.querySelector('#grand-total').textContent = money(totalCents);
     document.querySelector('#submit-total').textContent = money(totalCents);
+    document.querySelector('#verification-total-cents').value = String(totalCents);
+    return totalCents;
+  };
+
+  const refreshQuote = async () => {
+    const choice = document.querySelector('input[name="tip_choice"]:checked')?.value || '15';
+    const customTipCents = Math.max(
+      0,
+      Math.round((Number.parseFloat(customTipInput?.value) || 0) * 100),
+    );
+    const quote = await api('/api/checkout-quote', {
+      method: 'POST',
+      body: JSON.stringify({ tip_choice: choice, custom_tip_cents: customTipCents }),
+    });
+    data.subtotalCents = quote.subtotal_cents;
+    data.tipBasisCents = quote.tip_basis_cents;
+    data.taxCents = quote.tax_cents;
+    data.orderTotalCents = quote.order_total_cents;
+    document.querySelector('#summary-subtotal').textContent = quote.subtotal;
+    document.querySelector('#summary-tax').textContent = quote.tax;
+    const discountRow = document.querySelector('#summary-discount-row');
+    discountRow.hidden = quote.discount_cents === 0;
+    document.querySelector('#summary-discount').textContent = `−${quote.discount}`;
+    updateTip();
   };
 
   const renderSummary = (cart) => {
     data.cart = cart;
     data.subtotalCents = cart.totals.subtotal_cents;
-    data.taxCents = Math.round(data.subtotalCents * data.taxRate);
+    if (!data.squareDataEnabled) {
+      data.tipBasisCents = data.subtotalCents;
+      data.taxCents = Math.round(data.subtotalCents * data.taxRate);
+      data.orderTotalCents = data.subtotalCents + data.taxCents;
+    }
     const itemLabel = `${cart.totals.item_count} item${cart.totals.item_count === 1 ? '' : 's'}`;
     document.querySelector('#summary-item-count').textContent = itemLabel;
     document.querySelector('#summary-subtotal').textContent = cart.totals.subtotal;
@@ -95,6 +127,7 @@
     const quantityButton = event.target.closest('[data-cart-action]');
     if (!removeButton && !quantityButton) return;
     const summaryError = document.querySelector('#summary-error');
+    checkoutButton.disabled = true;
     try {
       let cart;
       if (removeButton) {
@@ -112,9 +145,12 @@
         return;
       }
       renderSummary(cart);
+      await refreshQuote();
     } catch (error) {
       summaryError.textContent = error.message;
       summaryError.hidden = false;
+    } finally {
+      checkoutButton.disabled = false;
     }
   });
 
@@ -126,10 +162,8 @@
       message.classList.add('field-note-error');
       return;
     }
-    message.textContent = data.demoMode
-      ? 'Code validation will be enabled with the Square connection.'
-      : 'Checking code…';
-    message.classList.remove('field-note-error');
+    message.textContent = 'Coupon and gift card redemption will be connected in the next Square step.';
+    message.classList.add('field-note-error');
   });
 
   const loadSlots = async (date) => {
@@ -184,5 +218,55 @@
     if (event.target === pickupDialog) pickupDialog.close();
   });
 
+  const initializeSquareCard = async () => {
+    if (data.demoMode) return;
+    if (!window.Square) throw new Error('Square’s secure card form did not load. Refresh and try again.');
+    const payments = window.Square.payments(
+      data.squareApplicationId,
+      data.squareLocationId,
+    );
+    squareCard = await payments.card();
+    await squareCard.attach('#card-container');
+  };
+
+  checkoutForm?.addEventListener('submit', async (event) => {
+    if (data.demoMode || document.querySelector('#source-id').value) return;
+    event.preventDefault();
+    paymentStatus.textContent = '';
+    checkoutButton.disabled = true;
+    checkoutButton.setAttribute('aria-busy', 'true');
+    try {
+      if (!squareCard) throw new Error('The secure card form is still loading. Try again in a moment.');
+      const totalCents = updateTip();
+      const nameParts = new FormData(checkoutForm).get('name').trim().split(/\s+/);
+      const tokenResult = await squareCard.tokenize({
+        amount: (totalCents / 100).toFixed(2),
+        billingContact: {
+          givenName: nameParts[0] || '',
+          familyName: nameParts.slice(1).join(' '),
+          email: new FormData(checkoutForm).get('email'),
+          phone: new FormData(checkoutForm).get('phone'),
+          countryCode: 'US',
+        },
+        currencyCode: data.currencyCode,
+        intent: 'CHARGE',
+        customerInitiated: true,
+        sellerKeyedIn: false,
+      });
+      if (tokenResult.status !== 'OK') {
+        throw new Error(tokenResult.errors?.[0]?.message || 'Check your card details and try again.');
+      }
+      document.querySelector('#source-id').value = tokenResult.token;
+      HTMLFormElement.prototype.submit.call(checkoutForm);
+    } catch (error) {
+      paymentStatus.textContent = error.message;
+      checkoutButton.disabled = false;
+      checkoutButton.removeAttribute('aria-busy');
+    }
+  });
+
   renderSummary(data.cart);
+  initializeSquareCard().catch((error) => {
+    if (paymentStatus) paymentStatus.textContent = error.message;
+  });
 })();

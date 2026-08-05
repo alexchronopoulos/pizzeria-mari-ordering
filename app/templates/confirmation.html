@@ -15,7 +15,8 @@
   {% if demo_mode %}
     <p>This prototype reserved the slot locally, but it did not charge a card, create a Square order, or send an email.</p>
   {% else %}
-    <p>A receipt is on its way to {{ customer_email }}.</p>
+    <p>Your payment and scheduled pickup order are confirmed in Square.</p>
+    {% if receipt_url %}<p><a class="button button-light" href="{{ receipt_url }}" target="_blank" rel="noopener">View Square receipt</a></p>{% endif %}
   {% endif %}
   <a class="button button-dark" href="{{ url_for('storefront.index') }}">Return to menu</a>
 </main>

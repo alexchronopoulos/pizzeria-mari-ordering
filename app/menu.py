@@ -1,19 +1,75 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 
 @dataclass(frozen=True)
-class Addition:
+class ModifierOption:
     id: str
     name: str
-    whole_price_cents: int
-    half_price_cents: int
+    price_cents: int
+    catalog_version: int | None = None
+    on_by_default: bool = False
 
     def public_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
+            "price_cents": self.price_cents,
+            "price": f"${self.price_cents / 100:.2f}",
+            "on_by_default": self.on_by_default,
+        }
+
+
+@dataclass(frozen=True)
+class ModifierGroup:
+    id: str
+    name: str
+    selection_type: str
+    min_selected: int
+    max_selected: int | None
+    options: tuple[ModifierOption, ...] = field(default_factory=tuple)
+
+    def public_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "selection_type": self.selection_type,
+            "min_selected": self.min_selected,
+            "max_selected": self.max_selected,
+            "options": [option.public_dict() for option in self.options],
+        }
+
+
+@dataclass(frozen=True)
+class Addition:
+    """One topping with Square modifier IDs for each available placement."""
+
+    id: str
+    name: str
+    placements: dict[str, ModifierOption]
+
+    @property
+    def whole_price_cents(self) -> int:
+        option = self.placements.get("whole")
+        return option.price_cents if option else 0
+
+    @property
+    def half_price_cents(self) -> int:
+        option = self.placements.get("first_half") or self.placements.get("second_half")
+        return option.price_cents if option else 0
+
+    def public_dict(self) -> dict:
+        placement_payload = {
+            placement: option.public_dict()
+            for placement, option in self.placements.items()
+        }
+        return {
+            "id": self.id,
+            "name": self.name,
+            "placements": placement_payload,
+            # Retained for the demo UI and backwards-compatible tests.
             "whole_price_cents": self.whole_price_cents,
             "half_price_cents": self.half_price_cents,
             "whole_price": f"${self.whole_price_cents / 100:.2f}",
@@ -31,8 +87,12 @@ class MenuItem:
     price_cents: int
     description: str
     additions: tuple[Addition, ...] = field(default_factory=tuple)
+    modifier_groups: tuple[ModifierGroup, ...] = field(default_factory=tuple)
     available: bool = True
     art: str = "plain"
+    image_url: str | None = None
+    catalog_object_id: str | None = None
+    catalog_version: int | None = None
 
     def public_dict(self) -> dict:
         return {
@@ -45,9 +105,36 @@ class MenuItem:
             "price": f"${self.price_cents / 100:.2f}",
             "description": self.description,
             "additions": [option.public_dict() for option in self.additions],
+            "modifier_groups": [group.public_dict() for group in self.modifier_groups],
             "available": self.available,
             "art": self.art,
+            "image_url": self.image_url,
         }
+
+
+@dataclass(frozen=True)
+class MenuSnapshot:
+    groups: tuple[dict, ...]
+    items: tuple[MenuItem, ...]
+    capacity_object_ids: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def items_by_id(self) -> dict[str, MenuItem]:
+        return {item.id: item for item in self.items}
+
+    @property
+    def pizza_catalog_object_ids(self) -> set[str]:
+        if self.capacity_object_ids:
+            return set(self.capacity_object_ids)
+        return {
+            item.catalog_object_id
+            for item in self.items
+            if item.capacity_category == "pizza" and item.catalog_object_id
+        }
+
+
+class MenuProvider(Protocol):
+    def snapshot(self) -> MenuSnapshot: ...
 
 
 DISPLAY_CATEGORIES = (
@@ -57,14 +144,26 @@ DISPLAY_CATEGORIES = (
 )
 
 
+def _demo_addition(id: str, name: str, whole: int, half: int) -> Addition:
+    return Addition(
+        id=id,
+        name=name,
+        placements={
+            "whole": ModifierOption(f"{id}:whole", name, whole),
+            "first_half": ModifierOption(f"{id}:first-half", name, half),
+            "second_half": ModifierOption(f"{id}:second-half", name, half),
+        },
+    )
+
+
 COMMON_ADDITIONS = (
-    Addition("pepperoni", "Pepperoni", 500, 300),
-    Addition("stracciatella", "House Stracciatella", 600, 350),
-    Addition("oyster-mushrooms", "Oyster Mushrooms", 600, 350),
-    Addition("pickled-chiles", "Pickled Chiles", 300, 200),
-    Addition("pesto", "Basil Pesto", 300, 200),
-    Addition("hot-honey", "Mari’s Hot Honey", 200, 125),
-    Addition("pecorino", "Pecorino", 200, 125),
+    _demo_addition("pepperoni", "Pepperoni", 500, 300),
+    _demo_addition("stracciatella", "House Stracciatella", 600, 350),
+    _demo_addition("oyster-mushrooms", "Oyster Mushrooms", 600, 350),
+    _demo_addition("pickled-chiles", "Pickled Chiles", 300, 200),
+    _demo_addition("pesto", "Basil Pesto", 300, 200),
+    _demo_addition("hot-honey", "Mari’s Hot Honey", 200, 125),
+    _demo_addition("pecorino", "Pecorino", 200, 125),
 )
 
 
@@ -184,17 +283,29 @@ ITEMS = (
     ),
 )
 
-ITEMS_BY_ID = {item.id: item for item in ITEMS}
+
+def _snapshot(items: tuple[MenuItem, ...]) -> MenuSnapshot:
+    groups = tuple(
+        {
+            "id": category_id,
+            "label": label,
+            "items": tuple(item for item in items if item.category == category_id),
+        }
+        for category_id, label in DISPLAY_CATEGORIES
+    )
+    return MenuSnapshot(groups=groups, items=items)
+
+
+DEMO_MENU = _snapshot(ITEMS)
+ITEMS_BY_ID = DEMO_MENU.items_by_id
+
+
+class StaticMenuProvider:
+    def snapshot(self) -> MenuSnapshot:
+        return DEMO_MENU
 
 
 def grouped_menu() -> list[dict]:
-    groups = []
-    for category_id, label in DISPLAY_CATEGORIES:
-        groups.append(
-            {
-                "id": category_id,
-                "label": label,
-                "items": [item for item in ITEMS if item.category == category_id],
-            }
-        )
-    return groups
+    """Backwards-compatible helper for callers that still use the demo menu."""
+
+    return list(DEMO_MENU.groups)

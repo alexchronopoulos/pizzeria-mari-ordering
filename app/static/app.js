@@ -8,6 +8,7 @@
   let activeItem = null;
   let quantity = 1;
   let selectedAdditions = new Map();
+  let selectedGroups = new Map();
 
   const escapeHtml = (value) => String(value)
     .replaceAll('&', '&amp;')
@@ -155,9 +156,17 @@
     const additionsTotal = [...selectedAdditions.entries()].reduce((total, [id, placement]) => {
       const option = activeItem.additions.find((addition) => addition.id === id);
       if (!option) return total;
-      return total + (placement === 'whole' ? option.whole_price_cents : option.half_price_cents);
+      return total + (option.placements[placement]?.price_cents || 0);
     }, 0);
-    const total = (activeItem.price_cents + additionsTotal) * quantity;
+    const groupTotal = [...selectedGroups.entries()].reduce((total, [groupId, optionIds]) => {
+      const group = activeItem.modifier_groups.find((candidate) => candidate.id === groupId);
+      if (!group) return total;
+      return total + [...optionIds].reduce((optionTotal, optionId) => {
+        const option = group.options.find((candidate) => candidate.id === optionId);
+        return optionTotal + (option?.price_cents || 0);
+      }, 0);
+    }, 0);
+    const total = (activeItem.price_cents + additionsTotal + groupTotal) * quantity;
     document.querySelector('#item-price').textContent = ` · $${(total / 100).toFixed(2)}`;
     document.querySelector('#quantity-value').textContent = quantity;
     updateAddButton();
@@ -168,22 +177,54 @@
       activeItem = data.menu[card.dataset.itemId];
       quantity = 1;
       selectedAdditions = new Map();
+      selectedGroups = new Map(activeItem.modifier_groups.map((group) => [
+        group.id,
+        new Set(group.options.filter((option) => option.on_by_default).map((option) => option.id)),
+      ]));
       itemError.hidden = true;
       document.querySelector('#item-category').textContent = activeItem.category_label;
       document.querySelector('#item-name').textContent = activeItem.name;
       document.querySelector('#item-description').textContent = activeItem.description;
-      document.querySelector('#item-art').className = `pizza-art pizza-${activeItem.art} pizza-large`;
+      const itemArt = document.querySelector('#item-art');
+      itemArt.className = activeItem.image_url
+        ? 'pizza-art pizza-large item-photo'
+        : `pizza-art pizza-${activeItem.art} pizza-large`;
+      itemArt.style.backgroundImage = activeItem.image_url
+        ? `url(${JSON.stringify(activeItem.image_url)})`
+        : '';
+      document.querySelector('#additions-fieldset').hidden = activeItem.additions.length === 0;
       document.querySelector('#item-additions').innerHTML = activeItem.additions.map((addition) => `
         <div class="addition-row" data-addition-id="${escapeHtml(addition.id)}">
           <strong>${escapeHtml(addition.name)}</strong>
           <div class="placement-options" role="group" aria-label="Placement for ${escapeHtml(addition.name)}">
             <button type="button" data-placement="none" aria-pressed="true">None</button>
-            <button type="button" data-placement="whole" aria-pressed="false">Whole <small>+${addition.whole_price}</small></button>
-            <button type="button" data-placement="first_half" aria-pressed="false">1st half <small>+${addition.half_price}</small></button>
-            <button type="button" data-placement="second_half" aria-pressed="false">2nd half <small>+${addition.half_price}</small></button>
+            ${addition.placements.whole ? `<button type="button" data-placement="whole" aria-pressed="false">Whole <small>+${addition.placements.whole.price}</small></button>` : ''}
+            ${addition.placements.first_half ? `<button type="button" data-placement="first_half" aria-pressed="false">1st half <small>+${addition.placements.first_half.price}</small></button>` : ''}
+            ${addition.placements.second_half ? `<button type="button" data-placement="second_half" aria-pressed="false">2nd half <small>+${addition.placements.second_half.price}</small></button>` : ''}
           </div>
         </div>
       `).join('');
+      document.querySelector('#item-modifier-groups').innerHTML = activeItem.modifier_groups.map((group) => {
+        const requirement = group.min_selected > 0 ? 'Required' : 'Optional';
+        const limit = group.max_selected
+          ? `Choose up to ${group.max_selected}`
+          : 'Choose any that apply';
+        return `
+          <fieldset class="modifier-list square-modifier-group" data-modifier-group="${escapeHtml(group.id)}" data-selection-type="${escapeHtml(group.selection_type)}" data-max-selected="${group.max_selected ?? ''}">
+            <legend>${escapeHtml(group.name)} <span>${requirement}</span></legend>
+            <p>${limit}</p>
+            <div class="square-modifier-options">
+              ${group.options.map((option) => `
+                <label>
+                  <input type="checkbox" value="${escapeHtml(option.id)}" ${option.on_by_default ? 'checked' : ''}>
+                  <span>${escapeHtml(option.name)}</span>
+                  ${option.price_cents ? `<small>+${option.price}</small>` : ''}
+                </label>
+              `).join('')}
+            </div>
+          </fieldset>
+        `;
+      }).join('');
       updateItemPrice();
       itemDialog.showModal();
     });
@@ -221,12 +262,47 @@
     updateItemPrice();
   });
 
+  document.querySelector('#item-modifier-groups')?.addEventListener('change', (event) => {
+    const input = event.target.closest('input[type="checkbox"]');
+    if (!input) return;
+    const groupElement = input.closest('[data-modifier-group]');
+    const groupId = groupElement.dataset.modifierGroup;
+    const selected = selectedGroups.get(groupId) || new Set();
+    if (input.checked && groupElement.dataset.selectionType === 'SINGLE') {
+      groupElement.querySelectorAll('input[type="checkbox"]').forEach((candidate) => {
+        if (candidate !== input) candidate.checked = false;
+      });
+      selected.clear();
+    }
+    if (input.checked) selected.add(input.value);
+    else selected.delete(input.value);
+    const maxSelected = Number.parseInt(groupElement.dataset.maxSelected, 10);
+    if (input.checked && Number.isFinite(maxSelected) && selected.size > maxSelected) {
+      input.checked = false;
+      selected.delete(input.value);
+      itemError.textContent = `Choose no more than ${maxSelected} options for this section.`;
+      itemError.hidden = false;
+    } else {
+      itemError.hidden = true;
+    }
+    selectedGroups.set(groupId, selected);
+    updateItemPrice();
+  });
+
   document.querySelector('#add-to-cart')?.addEventListener('click', async () => {
     const additions = [...selectedAdditions.entries()].map(([id, placement]) => ({ id, placement }));
+    const modifierSelections = Object.fromEntries(
+      [...selectedGroups.entries()].map(([groupId, optionIds]) => [groupId, [...optionIds]]),
+    );
     try {
       const cart = await api('/api/cart', {
         method: 'POST',
-        body: JSON.stringify({ item_id: activeItem.id, quantity, additions }),
+        body: JSON.stringify({
+          item_id: activeItem.id,
+          quantity,
+          additions,
+          modifier_selections: modifierSelections,
+        }),
       });
       renderCart(cart);
       itemDialog.close();

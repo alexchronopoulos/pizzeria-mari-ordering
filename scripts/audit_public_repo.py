@@ -56,7 +56,7 @@ TOKEN_PATTERNS = {
         r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@", re.IGNORECASE
     ),
     "assigned Square access token": re.compile(
-        r"(?im)^\s*SQUARE_ACCESS_TOKEN\s*=\s*[\"']?(?!\s*(?:[\"']?$|<|your[-_]|replace|change-me))[^\s#\"']{8,}"
+        r"(?im)^\s*SQUARE_ACCESS_TOKEN\s*=\s*[\"']?(?!\s*(?:[\"']?$|<|your[-_]|replace|change-me|os\.environ))[^\s#\"']{8,}"
     ),
     "assigned AWS secret key": re.compile(
         r"(?im)^\s*AWS_SECRET_ACCESS_KEY\s*=\s*[\"']?(?!\s*(?:[\"']?$|<|your[-_]|replace|change-me))[^\s#\"']{8,}"

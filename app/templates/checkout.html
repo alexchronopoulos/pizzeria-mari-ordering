@@ -2,6 +2,7 @@
 {% block title %}Checkout · Pizzeria Mari{% endblock %}
 {% block head %}
   <meta name="csrf-token" content="{{ csrf_token }}">
+  {% if square_js_url %}<script nonce="{{ csp_nonce }}" src="{{ square_js_url }}"></script>{% endif %}
 {% endblock %}
 
 {% block body %}
@@ -15,8 +16,11 @@
   </section>
 
   <div class="checkout-grid">
-    <form class="checkout-form" method="post">
+    <form class="checkout-form" id="checkout-form" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="checkout_attempt_id" value="{{ checkout_attempt_id }}">
+      <input type="hidden" id="source-id" name="source_id" value="">
+      <input type="hidden" id="verification-total-cents" name="verification_total_cents" value="{{ checkout.total_cents }}">
       {% if error %}<p class="form-error checkout-error">{{ error }}</p>{% endif %}
       {% if demo_mode %}
         <div class="demo-notice"><strong>Prototype checkout</strong><span>No card will be charged and no email will be sent yet.</span></div>
@@ -67,10 +71,15 @@
 
       <fieldset>
         <legend>Payment</legend>
-        <div class="payment-placeholder">
-          <strong>Secure Square payment form</strong>
-          <span>The live card and gift card fields will appear here after Sandbox credentials are connected.</span>
-        </div>
+        {% if demo_mode %}
+          <div class="payment-placeholder">
+            <strong>Secure Square payment form</strong>
+            <span>Card entry appears here when Square Sandbox mode is enabled.</span>
+          </div>
+        {% else %}
+          <div id="card-container" class="square-card" aria-label="Card details"></div>
+          <p class="field-note" id="payment-status" role="alert" aria-live="polite"></p>
+        {% endif %}
       </fieldset>
 
       <button class="button button-primary button-block checkout-submit" type="submit">
@@ -103,7 +112,8 @@
       <p class="summary-error" id="summary-error" role="alert" hidden></p>
       <div class="summary-totals">
         <div><span>Subtotal</span><strong id="summary-subtotal">{{ checkout.subtotal }}</strong></div>
-        <div><span>Sales tax ({{ checkout.tax_rate }})</span><strong id="summary-tax">{{ checkout.tax }}</strong></div>
+        <div id="summary-discount-row" {% if not checkout.discount_cents %}hidden{% endif %}><span>Discount</span><strong id="summary-discount">−{{ checkout.discount }}</strong></div>
+        <div><span>{{ checkout.tax_label }}</span><strong id="summary-tax">{{ checkout.tax }}</strong></div>
         <div><span>Tip <small id="tip-label">({{ checkout.tip_label }})</small></span><strong id="tip-total">{{ checkout.tip }}</strong></div>
         <div class="summary-grand-total"><span>Total</span><strong id="grand-total">{{ checkout.total }}</strong></div>
       </div>
@@ -113,17 +123,23 @@
 
 {% include "_pickup_dialog.html" %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
   window.CHECKOUT_DATA = {{ {
     "subtotalCents": checkout.subtotal_cents,
+    "tipBasisCents": checkout.tip_basis_cents,
     "taxCents": checkout.tax_cents,
+    "orderTotalCents": checkout.order_total_cents,
     "taxRate": sales_tax_rate,
     "cart": cart,
     "pizzaLimit": pizza_limit,
     "totalLimit": total_limit,
     "selectedDate": selected.strftime('%Y-%m-%d'),
-    "demoMode": demo_mode
+    "demoMode": demo_mode,
+    "squareDataEnabled": square_data_enabled,
+    "squareApplicationId": square_application_id,
+    "squareLocationId": square_location_id,
+    "currencyCode": "USD"
   }|tojson }};
 </script>
-<script src="{{ url_for('static', filename='checkout.js') }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='checkout.js') }}" defer></script>
 {% endblock %}

@@ -130,6 +130,8 @@ a { color: inherit; }
 .menu-card-copy > span:not(.price) { display: -webkit-box; overflow: hidden; margin-top: 7px; color: #454545; font-size: .88rem; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .menu-card-copy .price { margin-top: auto; padding-top: 10px; font-weight: 800; }
 .menu-card-copy em { color: var(--red); font-size: .8rem; font-style: normal; font-weight: 800; }
+.menu-photo { place-self: center; width: 94px; aspect-ratio: 1; overflow: hidden; border: 2px solid var(--ink); border-radius: 50%; background: #eee; }
+.menu-photo img { width: 100%; height: 100%; object-fit: cover; }
 
 .pizza-art {
   place-self: center;
@@ -148,6 +150,7 @@ a { color: inherit; }
 .pizza-mushroom { background-image: radial-gradient(ellipse at 32% 32%, #76523a 0 8px, transparent 9px), radial-gradient(ellipse at 68% 62%, #76523a 0 9px, transparent 10px), radial-gradient(circle at 60% 25%, #a5301f 0 3px, transparent 4px), radial-gradient(circle, #ead69d 0 59%, #e0a24b 60% 100%); }
 .pizza-cherry, .pizza-sungold { background-image: radial-gradient(circle at 27% 29%, #f37433 0 7px, transparent 8px), radial-gradient(circle at 68% 28%, #f6e057 0 7px, transparent 8px), radial-gradient(circle at 60% 67%, #f37433 0 7px, transparent 8px), radial-gradient(circle at 28% 68%, #33803d 0 4px, transparent 5px), radial-gradient(circle, #f4c665 0 59%, #e0a24b 60% 100%); }
 .pizza-large { width: 130px; }
+.item-photo { border: 2px solid var(--ink); background-color: #eee; background-position: center; background-size: cover; box-shadow: 4px 4px 0 var(--ink); transform: none; }
 
 .cart-card { position: sticky; top: 98px; padding: 20px; background: var(--paper); border: 3px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); }
 .cart-heading { display: flex; justify-content: space-between; align-items: start; padding-bottom: 13px; border-bottom: 2px solid var(--ink); }
@@ -198,6 +201,11 @@ a { color: inherit; }
 .modifier-list legend { font-size: 1.25rem; line-height: 1; }
 .modifier-list legend span, .checkout-form legend span { color: #666; font-size: .76rem; font-weight: 400; }
 .modifier-list label { display: flex; gap: 9px; padding: 8px 0; }
+.square-modifier-group > p { margin: 2px 0 10px; color: #555; font-size: .86rem; }
+.square-modifier-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.square-modifier-options label { display: grid; grid-template-columns: auto 1fr auto; align-items: center; min-height: 46px; padding: 9px 10px; background: white; border: 2px solid var(--ink); cursor: pointer; }
+.square-modifier-options input { width: 18px; height: 18px; accent-color: var(--green); }
+.square-modifier-options small { font-size: .72rem; }
 .addition-picker > p { margin: 2px 0 14px; color: #555; font-size: .86rem; }
 .addition-row { display: grid; gap: 8px; padding: 13px 0; border-top: 1px solid var(--line); }
 .addition-row:first-child { padding-top: 0; border-top: 0; }
@@ -235,6 +243,7 @@ a { color: inherit; }
 .field-note-error { color: var(--red); font-weight: 800; }
 .payment-placeholder { display: grid; gap: 3px; padding: 18px; background: #f3f0df; border: 2px dashed var(--ink); }
 .payment-placeholder span { color: #555; font-size: .85rem; }
+.square-card { min-height: 90px; padding: 13px; background: white; border: 2px solid var(--ink); }
 .demo-notice { display: grid; gap: 2px; margin-bottom: 25px; padding: 13px; background: var(--lavender); border: 2px solid var(--ink); }
 .demo-notice span { font-size: .85rem; }
 .order-summary { position: sticky; top: 98px; padding: 22px; background: var(--blue); color: var(--paper); border: 3px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); }
@@ -279,11 +288,13 @@ a { color: inherit; }
   .menu-grid { grid-template-columns: 1fr; }
   .menu-card { grid-template-columns: 1fr 90px; min-height: 155px; }
   .pizza-art { width: 78px; }
+  .menu-photo { width: 78px; }
   .slot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .date-row { grid-template-columns: repeat(4, 98px); }
   .text-button { position: static; display: inline-block; margin-top: 14px; }
   .tip-row { grid-template-columns: repeat(2, 1fr); }
   .placement-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .square-modifier-options { grid-template-columns: 1fr; }
   .checkout-form { padding: 18px; }
   .confirmation-details { grid-template-columns: 1fr; text-align: center; }
   .confirmation-details strong { margin-bottom: 8px; text-align: center; }
