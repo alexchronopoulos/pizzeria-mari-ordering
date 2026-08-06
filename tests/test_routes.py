@@ -54,8 +54,53 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.11.0" in response.data
-    assert b"/static/app.js?v=0.11.0" in response.data
+    assert b"/static/style.css?v=0.12.0" in response.data
+    assert b"/static/app.js?v=0.12.0" in response.data
+
+
+def test_capacity_thresholds_load_from_environment_and_reject_invalid_values(
+    monkeypatch,
+):
+    monkeypatch.setenv("DEMO_MODE", "true")
+    monkeypatch.setenv("SQUARE_CATALOG_ENABLED", "false")
+    monkeypatch.setenv("PIZZA_CART_LIMIT", "4")
+    monkeypatch.setenv("PIZZA_SLOT_CAPACITY", "5")
+    monkeypatch.setenv("CART_TOTAL_LIMIT", "6")
+
+    configured = create_app()
+    assert configured.config["PIZZA_CART_LIMIT"] == 4
+    assert configured.config["PIZZA_SLOT_CAPACITY"] == 5
+    assert configured.config["CART_TOTAL_LIMIT"] == 6
+    assert configured.config["CATEGORY_LIMITS"] == {"pizza": 4}
+
+    page = configured.test_client().get("/")
+    assert b"add up to 4 pizzas and 6 items total" in page.data
+
+    monkeypatch.setenv("CART_TOTAL_LIMIT", "not-a-number")
+    with pytest.raises(RuntimeError, match="CART_TOTAL_LIMIT must be"):
+        create_app()
+
+
+def test_capacity_threshold_relationships_are_validated():
+    with pytest.raises(RuntimeError, match="cannot exceed PIZZA_SLOT_CAPACITY"):
+        create_app(
+            {
+                "TESTING": True,
+                "PIZZA_CART_LIMIT": 4,
+                "PIZZA_SLOT_CAPACITY": 3,
+                "CART_TOTAL_LIMIT": 8,
+            }
+        )
+
+    with pytest.raises(RuntimeError, match="cannot exceed CART_TOTAL_LIMIT"):
+        create_app(
+            {
+                "TESTING": True,
+                "PIZZA_CART_LIMIT": 4,
+                "PIZZA_SLOT_CAPACITY": 4,
+                "CART_TOTAL_LIMIT": 3,
+            }
+        )
 
 
 def test_brand_typography_uses_compagnon_for_display_and_semplicita_for_body(app):

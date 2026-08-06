@@ -20,7 +20,7 @@ from .square import (
 )
 
 
-APP_VERSION = "0.11.0"
+APP_VERSION = "0.12.0"
 
 
 def _csv_setting(
@@ -33,6 +33,21 @@ def _csv_setting(
         for value in environment.get(name, default).split(",")
         if value.strip()
     )
+
+
+def _unique_values(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Combine ordered settings without publishing a category twice."""
+    return tuple(dict.fromkeys(value for group in groups for value in group))
+
+
+def _positive_integer(value: object, name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{name} must be a positive whole number.") from exc
+    if parsed < 1 or isinstance(value, float) and not value.is_integer():
+        raise RuntimeError(f"{name} must be a positive whole number.")
+    return parsed
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -64,9 +79,15 @@ def create_app(test_config: dict | None = None) -> Flask:
         TIMEZONE="America/New_York",
         ADVANCE_DAYS=7,
         SLOT_INTERVAL_MINUTES=15,
-        PIZZA_SLOT_CAPACITY=3,
-        CART_TOTAL_LIMIT=8,
-        CATEGORY_LIMITS={"pizza": 3},
+        PIZZA_CART_LIMIT=_positive_integer(
+            environment.get("PIZZA_CART_LIMIT", "3"), "PIZZA_CART_LIMIT"
+        ),
+        PIZZA_SLOT_CAPACITY=_positive_integer(
+            environment.get("PIZZA_SLOT_CAPACITY", "3"), "PIZZA_SLOT_CAPACITY"
+        ),
+        CART_TOTAL_LIMIT=_positive_integer(
+            environment.get("CART_TOTAL_LIMIT", "8"), "CART_TOTAL_LIMIT"
+        ),
         SALES_TAX_RATE=0.08,
         APP_VERSION=APP_VERSION,
         SERVICE_HOURS={
@@ -91,6 +112,11 @@ def create_app(test_config: dict | None = None) -> Flask:
             "SQUARE_ALLOWED_CATEGORY_NAMES",
             "Seasonal Special Pies,Traditional Pies,Mari Pies",
         ),
+        SQUARE_ADDITIONAL_CATEGORY_NAMES=_csv_setting(
+            environment,
+            "SQUARE_ADDITIONAL_CATEGORY_NAMES",
+            "Sides,Desserts,Salads,Drinks",
+        ),
         SQUARE_PIZZA_CATEGORY_NAMES=_csv_setting(
             environment,
             "SQUARE_PIZZA_CATEGORY_NAMES",
@@ -108,6 +134,24 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     if test_config:
         app.config.update(test_config)
+
+    for threshold_name in (
+        "PIZZA_CART_LIMIT",
+        "PIZZA_SLOT_CAPACITY",
+        "CART_TOTAL_LIMIT",
+    ):
+        app.config[threshold_name] = _positive_integer(
+            app.config[threshold_name], threshold_name
+        )
+    if app.config["PIZZA_CART_LIMIT"] > app.config["PIZZA_SLOT_CAPACITY"]:
+        raise RuntimeError(
+            "PIZZA_CART_LIMIT cannot exceed PIZZA_SLOT_CAPACITY."
+        )
+    if app.config["PIZZA_CART_LIMIT"] > app.config["CART_TOTAL_LIMIT"]:
+        raise RuntimeError("PIZZA_CART_LIMIT cannot exceed CART_TOTAL_LIMIT.")
+    app.config["CATEGORY_LIMITS"] = {
+        "pizza": app.config["PIZZA_CART_LIMIT"]
+    }
 
     insecure_placeholders = {"replace-me", "development-only-change-me"}
     if not app.config["DEMO_MODE"] and (
@@ -157,8 +201,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.extensions["menu_provider"] = SquareCatalogProvider(
             client=client,
             location_id=app.config["SQUARE_LOCATION_ID"],
-            allowed_category_names=tuple(
-                app.config["SQUARE_ALLOWED_CATEGORY_NAMES"]
+            allowed_category_names=_unique_values(
+                tuple(app.config["SQUARE_ALLOWED_CATEGORY_NAMES"]),
+                tuple(app.config["SQUARE_ADDITIONAL_CATEGORY_NAMES"]),
             ),
             pizza_category_names=tuple(app.config["SQUARE_PIZZA_CATEGORY_NAMES"]),
             excluded_modifier_list_names=tuple(

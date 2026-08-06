@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.11 capabilities
+## Current v0.12 capabilities
 
 - Orders through seven days in advance with configured 15-minute pickup times.
 - Three-pizza cart and slot limits, plus a configurable eight-item overall limit.
@@ -13,7 +13,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Large square menu photography with a pizza-centered focal crop and no image border; the complete item card has a border. Item details show a larger uncropped image above the item name.
 - One compact Additions picker whose visible options come from Square's Whole Pie Additions list. Whole, first-half, and second-half choices resolve to the matching option and price in their respective Square lists.
 - Every other customer-facing modifier list attached to an item is rendered and validated automatically, including Square's inherited/unlimited selection rules.
-- Sides & Desserts and Drinks modifier lists are hidden until those categories move onto the main menu.
+- Square's Sides, Desserts, Salads, and Drinks categories appear as regular main-menu sections while their old upsell modifier lists remain hidden.
 - Square-calculated taxes and automatic catalog discounts.
 - Square Web Payments SDK card tokenization; raw card details never reach Flask.
 - Scheduled Square pickup orders with the buyer, pickup time, notes, catalog-backed items, and catalog-backed modifiers.
@@ -86,11 +86,14 @@ These `.env` values select exact Square category names and their display order:
 
 ```dotenv
 SQUARE_ALLOWED_CATEGORY_NAMES=Seasonal Special Pies,Traditional Pies,Mari Pies
+SQUARE_ADDITIONAL_CATEGORY_NAMES=Sides,Desserts,Salads,Drinks
 SQUARE_PIZZA_CATEGORY_NAMES=Seasonal Special Pies,Traditional Pies,Mari Pies
 SQUARE_EXCLUDED_MODIFIER_LIST_NAMES=Sides & Desserts,Drinks
 ```
 
-All items in `SQUARE_PIZZA_CATEGORY_NAMES` consume pizza cart and pickup-slot capacity. All other allowed categories appear on the menu and count only toward the overall cart limit.
+`SQUARE_ADDITIONAL_CATEGORY_NAMES` is appended to the allowed list, so an existing `.env` with the earlier pizza-only `SQUARE_ALLOWED_CATEGORY_NAMES` setting automatically publishes these sections. Duplicate names are removed while preserving display order.
+
+All items in `SQUARE_PIZZA_CATEGORY_NAMES` consume pizza cart and pickup-slot capacity. Items in Sides, Desserts, Salads, and Drinks count only toward the overall cart limit.
 
 `SQUARE_EXCLUDED_MODIFIER_LIST_NAMES` contains exact Square modifier-list names that should not appear inside an item's customization dialog. This does not delete or copy those lists; the catalog remains in Square.
 
@@ -99,6 +102,16 @@ Catalog results are held in process memory for 30 seconds by default to keep pag
 ```dotenv
 SQUARE_CATALOG_CACHE_SECONDS=30
 ```
+
+Cart and production thresholds are also configurable without editing source:
+
+```dotenv
+PIZZA_CART_LIMIT=3
+PIZZA_SLOT_CAPACITY=3
+CART_TOTAL_LIMIT=8
+```
+
+All three values must be positive whole numbers. `PIZZA_CART_LIMIT` cannot exceed the per-slot capacity or the total-item cart limit; invalid combinations stop the app at startup with a clear configuration error.
 
 The app pins Square API version `2026-07-15` in every request. Upgrade it deliberately after reviewing Square's release notes.
 

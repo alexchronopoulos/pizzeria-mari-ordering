@@ -25,6 +25,10 @@ def catalog_objects() -> list[dict]:
             ("CAT_SEASONAL", "Seasonal Special Pies"),
             ("CAT_TRADITIONAL", "Traditional Pies"),
             ("CAT_MARI", "Mari Pies"),
+            ("CAT_SIDES", "Sides"),
+            ("CAT_DESSERTS", "Desserts"),
+            ("CAT_SALADS", "Salads"),
+            ("CAT_DRINKS", "Drinks"),
         )
     ]
 
@@ -157,7 +161,42 @@ def catalog_objects() -> list[dict]:
             ],
         },
     }
-    return [*categories, *modifiers, image, item]
+
+    def simple_item(
+        item_id: str,
+        variation_id: str,
+        name: str,
+        category_id: str,
+        price: int,
+    ) -> dict:
+        return {
+            "type": "ITEM",
+            "id": item_id,
+            "item_data": {
+                "name": name,
+                "categories": [{"id": category_id}],
+                "variations": [
+                    {
+                        "type": "ITEM_VARIATION",
+                        "id": variation_id,
+                        "version": 14,
+                        "item_variation_data": {
+                            "name": "Regular",
+                            "sellable": True,
+                            "price_money": {"amount": price, "currency": "USD"},
+                        },
+                    }
+                ],
+            },
+        }
+
+    non_pizza_items = [
+        simple_item("ITEM_SIDE", "VAR_SIDE", "Garlic Knots", "CAT_SIDES", 800),
+        simple_item("ITEM_DESSERT", "VAR_DESSERT", "Chocolate Cookie", "CAT_DESSERTS", 500),
+        simple_item("ITEM_SALAD", "VAR_SALAD", "Cucumber Salad", "CAT_SALADS", 1200),
+        simple_item("ITEM_DRINK", "VAR_DRINK", "Sparkling Water", "CAT_DRINKS", 300),
+    ]
+    return [*categories, *modifiers, image, item, *non_pizza_items]
 
 
 class SquareFixture:
@@ -304,6 +343,46 @@ def test_square_catalog_drives_items_images_and_modifier_groups(square_app):
     assert [group.name for group in item.modifier_groups] == ["Preferences"]
     assert item.modifier_groups[0].min_selected == 0
     assert item.modifier_groups[0].max_selected is None
+
+
+def test_square_non_pizza_categories_appear_and_do_not_consume_pizza_capacity(square_app):
+    client = square_app.test_client()
+    response = client.get("/")
+    html = response.get_data(as_text=True)
+
+    expected = [
+        ("Sides", "Garlic Knots"),
+        ("Desserts", "Chocolate Cookie"),
+        ("Salads", "Cucumber Salad"),
+        ("Drinks", "Sparkling Water"),
+    ]
+    previous_position = html.index("Mari Pies")
+    for category, item_name in expected:
+        category_position = html.index(f"<h2>{category}</h2>")
+        item_position = html.index(f"<strong>{item_name}</strong>")
+        assert previous_position < category_position < item_position
+        previous_position = category_position
+
+    menu = square_app.extensions["menu_provider"].snapshot()
+    for variation_id in ("VAR_SIDE", "VAR_DESSERT", "VAR_SALAD", "VAR_DRINK"):
+        assert menu.items_by_id[variation_id].capacity_category is None
+
+    token = csrf(client)
+    headers = {"X-CSRF-Token": token}
+    pizza = client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 3},
+        headers=headers,
+    )
+    assert pizza.status_code == 201
+    side = client.post(
+        "/api/cart",
+        json={"item_id": "VAR_SIDE", "quantity": 1},
+        headers=headers,
+    )
+    assert side.status_code == 201
+    assert side.get_json()["totals"]["pizza_count"] == 3
+    assert side.get_json()["totals"]["item_count"] == 4
 
 
 def test_square_menu_uses_large_borderless_image_above_item_name(square_app):
