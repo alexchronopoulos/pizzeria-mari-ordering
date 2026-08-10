@@ -5,6 +5,9 @@
   const itemDialog = document.querySelector('#item-dialog');
   const slotGrid = document.querySelector('#slot-grid');
   const itemError = document.querySelector('#item-error');
+  const slotCache = new Map(Object.entries(data.slotsByDate || {}));
+  const slotRequests = new Map();
+  let displayedSlotDate = null;
   let activeItem = null;
   let quantity = 1;
   let selectedAdditions = new Map();
@@ -76,21 +79,39 @@
     }).join('');
   };
 
+  const renderSlots = (slots) => {
+    slotGrid.innerHTML = slots.map((slot) => `
+      <button class="slot-choice${slot.available ? '' : ' slot-choice-unavailable'}" type="button" data-service-at="${slot.iso}" aria-label="${escapeHtml(`${slot.time}, ${slot.status}`)}" ${slot.available ? '' : 'disabled'}>
+        <strong>${slot.time}</strong>
+        <span class="slot-capacity">${escapeHtml(slot.status)}</span>
+      </button>
+    `).join('') || '<p>No pickup times are available for this day.</p>';
+  };
+
+  const fetchSlots = (date) => {
+    if (slotRequests.has(date)) return slotRequests.get(date);
+    const pending = api(`/api/slots?date=${encodeURIComponent(date)}`)
+      .finally(() => slotRequests.delete(date));
+    slotRequests.set(date, pending);
+    return pending;
+  };
+
   const loadSlots = async (date) => {
-    slotGrid.innerHTML = '<p>Loading pickup times…</p>';
+    displayedSlotDate = date;
     document.querySelectorAll('.date-choice').forEach((button) => {
       button.classList.toggle('active', button.dataset.date === date);
     });
+    const cached = slotCache.get(date);
+    if (cached) renderSlots(cached);
+    else slotGrid.innerHTML = '<p>Loading pickup times…</p>';
     try {
-      const payload = await api(`/api/slots?date=${encodeURIComponent(date)}`);
-      slotGrid.innerHTML = payload.slots.map((slot) => `
-        <button class="slot-choice${slot.available ? '' : ' slot-choice-unavailable'}" type="button" data-service-at="${slot.iso}" aria-label="${escapeHtml(`${slot.time}, ${slot.status}`)}" ${slot.available ? '' : 'disabled'}>
-          <strong>${slot.time}</strong>
-          <span class="slot-capacity">${escapeHtml(slot.status)}</span>
-        </button>
-      `).join('') || '<p>No pickup times are available for this day.</p>';
+      const payload = await fetchSlots(date);
+      slotCache.set(date, payload.slots);
+      if (displayedSlotDate === date) renderSlots(payload.slots);
     } catch (error) {
-      slotGrid.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`;
+      if (!cached && displayedSlotDate === date) {
+        slotGrid.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`;
+      }
     }
   };
 

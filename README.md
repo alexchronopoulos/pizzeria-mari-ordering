@@ -2,13 +2,15 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.17.1 capabilities
+## Current v0.18 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
 - Configurable pizza-cart and overall-item limits.
 - Every pickup time shows its remaining pizza capacity; full times remain visible and clearly labeled instead of disappearing.
 - A saved pickup time is rechecked when the storefront or checkout page opens; if it has filled, the next available time is selected automatically.
+- Pickup choices are included in the initial page response, so the picker opens immediately while a fresh availability check runs quietly.
+- Cart additions and quantity changes reuse the menu and remaining capacity already shown to the customer instead of blocking on repeated Square reads.
 - Compagnon display type, Semplicita body type, Pizzeria Mari colors, and responsive layouts.
 - Quantity controls on the menu and checkout, with preventative limit feedback.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
@@ -120,7 +122,7 @@ Catalog results are held in process memory for 30 seconds by default to keep pag
 SQUARE_CATALOG_CACHE_SECONDS=30
 ```
 
-Pickup availability is intentionally simple. The site reads scheduled orders from Square and counts paid `OPEN` and `COMPLETED` orders. Unpaid hosted-checkout drafts and unfinished app-created gift-card orders are ignored, so an abandoned checkout cannot block a pickup time. There is no webhook, background cleanup, expiration job, or checkout-capacity recheck.
+Pickup availability is intentionally simple. The site reads scheduled orders from Square and counts paid `OPEN` and `COMPLETED` orders. One result supplies every date in the pickup picker, and a five-second in-process cache collapses duplicate reads made by closely spaced page and picker requests. Cart edits use the remaining capacity from the page the customer just reviewed. Unpaid hosted-checkout drafts and unfinished app-created gift-card orders are ignored, so an abandoned checkout cannot block a pickup time. There is no database, webhook, background cleanup, expiration job, or checkout-capacity recheck.
 
 ## Testing gift-card payments
 

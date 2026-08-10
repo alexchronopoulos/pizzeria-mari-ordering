@@ -347,6 +347,10 @@ class SquareCatalogProvider:
             self._cached_at = now
             return snapshot
 
+    def cached_snapshot(self) -> MenuSnapshot | None:
+        """Return the menu already shown to this process without a network read."""
+        return self._cached
+
     def _build(self, objects: list[dict]) -> MenuSnapshot:
         categories = {
             obj["id"]: obj
@@ -583,10 +587,16 @@ class SquareCommerce:
         client: SquareClient,
         location_id: str,
         timezone_name: str,
+        availability_cache_seconds: float = 5.0,
     ) -> None:
         self.client = client
         self.location_id = location_id
         self.timezone = ZoneInfo(timezone_name)
+        self.availability_cache_seconds = max(0.0, availability_cache_seconds)
+        self._pizza_counts_cache: dict[str, int] | None = None
+        self._pizza_counts_cache_ids: frozenset[str] = frozenset()
+        self._pizza_counts_cached_at = 0.0
+        self._pizza_counts_lock = threading.Lock()
 
     @staticmethod
     def _parse_datetime(value: str) -> datetime | None:
@@ -600,6 +610,37 @@ class SquareCommerce:
     ) -> dict[str, int]:
         if not variation_ids:
             return {}
+        cache_ids = frozenset(variation_ids)
+        checked_at = time.monotonic()
+        if (
+            self._pizza_counts_cache is not None
+            and cache_ids == self._pizza_counts_cache_ids
+            and checked_at - self._pizza_counts_cached_at
+            < self.availability_cache_seconds
+        ):
+            return dict(self._pizza_counts_cache)
+
+        with self._pizza_counts_lock:
+            checked_at = time.monotonic()
+            if (
+                self._pizza_counts_cache is not None
+                and cache_ids == self._pizza_counts_cache_ids
+                and checked_at - self._pizza_counts_cached_at
+                < self.availability_cache_seconds
+            ):
+                return dict(self._pizza_counts_cache)
+            counts = self._fetch_pizza_counts(
+                variation_ids=variation_ids,
+                now=now,
+            )
+            self._pizza_counts_cache = counts
+            self._pizza_counts_cache_ids = cache_ids
+            self._pizza_counts_cached_at = time.monotonic()
+            return dict(counts)
+
+    def _fetch_pizza_counts(
+        self, *, variation_ids: set[str], now: datetime
+    ) -> dict[str, int]:
         orders = self.client.search_orders(
             location_id=self.location_id,
             created_after=now - timedelta(days=31),

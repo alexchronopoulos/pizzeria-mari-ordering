@@ -509,6 +509,52 @@ def test_square_catalog_drives_items_images_and_modifier_groups(square_app):
     assert item.modifier_groups[0].max_selected is None
 
 
+def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
+    client = square_app.test_client()
+    page = client.get("/")
+    assert page.status_code == 200
+    assert b'"slotsByDate"' in page.data
+
+    def request_count(path: str) -> int:
+        return sum(
+            request.url.path == path
+            for request in square_app.square_fixture.requests
+        )
+
+    assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/orders/search") == 1
+
+    # Opening the picker revalidates in the background, but the short server
+    # cache collapses that immediate duplicate availability read.
+    slots = client.get("/api/slots?date=2026-08-06")
+    assert slots.status_code == 200
+    assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/orders/search") == 1
+
+    with client.session_transaction() as browser_session:
+        token = browser_session["csrf_token"]
+    added = client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    assert added.status_code == 201
+    line_id = added.get_json()["lines"][0]["id"]
+
+    updated = client.patch(
+        f"/api/cart/{line_id}",
+        json={"quantity": 2},
+        headers={"X-CSRF-Token": token},
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["lines"][0]["quantity"] == 2
+
+    # The cart uses the menu and remaining capacity shown on the page. It does
+    # not block each click on another catalog or order search.
+    assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/orders/search") == 1
+
+
 def test_square_non_pizza_categories_appear_and_do_not_consume_pizza_capacity(square_app):
     client = square_app.test_client()
     response = client.get("/")

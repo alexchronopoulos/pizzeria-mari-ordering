@@ -233,7 +233,7 @@ wheels = [
 
 [[package]]
 name = "pizzeria-mari-ordering"
-version = "0.17.1"
+version = "0.18"
 source = { editable = "." }
 dependencies = [
     { name = "flask" },

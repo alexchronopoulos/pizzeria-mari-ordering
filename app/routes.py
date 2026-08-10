@@ -98,8 +98,14 @@ def _save_cart(lines: list[dict]) -> None:
     session.modified = True
 
 
-def _menu() -> MenuSnapshot:
-    return current_app.extensions["menu_provider"].snapshot()
+def _menu(*, allow_stale: bool = False) -> MenuSnapshot:
+    provider = current_app.extensions["menu_provider"]
+    if allow_stale:
+        cached_snapshot = getattr(provider, "cached_snapshot", None)
+        cached = cached_snapshot() if cached_snapshot else None
+        if cached is not None:
+            return cached
+    return provider.snapshot()
 
 
 def _date_choices() -> list[dict]:
@@ -184,10 +190,49 @@ def _slots(
     return results
 
 
+def _slot_payload(
+    day: date,
+    menu: MenuSnapshot,
+    counts: dict[str, int],
+) -> list[dict]:
+    payload = []
+    for slot in _slots(day, menu, counts):
+        remaining = slot["remaining"]
+        status = (
+            "Full"
+            if remaining == 0
+            else f"{remaining} pizza{'s' if remaining != 1 else ''} available"
+        )
+        payload.append(
+            {
+                "iso": slot["iso"],
+                "time": slot["time"],
+                "available": slot["available"],
+                "remaining": remaining,
+                "status": status,
+            }
+        )
+    return payload
+
+
+def _slots_by_date(
+    menu: MenuSnapshot,
+    date_choices: list[dict],
+    counts: dict[str, int],
+) -> dict[str, list[dict]]:
+    return {
+        choice["iso"]: _slot_payload(
+            date.fromisoformat(choice["iso"]), menu, counts
+        )
+        for choice in date_choices
+    }
+
+
 def _selected_slot(
     menu: MenuSnapshot | None = None,
     *,
     refresh_availability: bool = True,
+    counts: dict[str, int] | None = None,
 ) -> datetime | None:
     raw = session.get("service_at")
     selected = None
@@ -202,16 +247,23 @@ def _selected_slot(
             pass
 
     menu = menu or _menu()
-    counts = _pizza_counts(menu)
+    counts = _pizza_counts(menu) if counts is None else counts
     available_slots = [
         slot
         for day in [date.fromisoformat(choice["iso"]) for choice in _date_choices()]
         for slot in _slots(day, menu, counts)
         if slot["available"]
     ]
-    if selected is not None and any(
-        slot["iso"] == selected.isoformat() for slot in available_slots
-    ):
+    selected_slot = next(
+        (
+            slot
+            for slot in available_slots
+            if selected is not None and slot["iso"] == selected.isoformat()
+        ),
+        None,
+    )
+    if selected_slot is not None:
+        session["service_at_remaining"] = selected_slot["remaining"]
         return selected
 
     first = next(
@@ -226,10 +278,24 @@ def _selected_slot(
     if first:
         selected = datetime.fromisoformat(first["iso"])
         session["service_at"] = selected.isoformat()
+        session["service_at_remaining"] = first["remaining"]
         return selected
 
     session.pop("service_at", None)
+    session.pop("service_at_remaining", None)
     return None
+
+
+def _selected_slot_remaining(
+    selected: datetime,
+    menu: MenuSnapshot,
+) -> int:
+    known = session.get("service_at_remaining")
+    if isinstance(known, int) and known >= 0:
+        return known
+    remaining = _remaining(selected, menu)
+    session["service_at_remaining"] = remaining
+    return remaining
 
 
 def _validated_modifiers(item: MenuItem, payload: dict) -> list[dict]:
@@ -492,7 +558,9 @@ def index():
     if not current_app.config["ORDERING_ENABLED"]:
         return render_template("ordering_paused.html")
     menu = _menu()
-    selected = _selected_slot(menu)
+    date_choices = _date_choices()
+    counts = _pizza_counts(menu)
+    selected = _selected_slot(menu, counts=counts)
     selected_display = None
     if selected:
         selected_display = {
@@ -504,7 +572,8 @@ def index():
         "index.html",
         menu_groups=menu.groups,
         menu_json={item.id: item.public_dict() for item in menu.items},
-        date_choices=_date_choices(),
+        date_choices=date_choices,
+        slots_by_date=_slots_by_date(menu, date_choices, counts),
         selected=selected_display,
         csrf_token=_csrf_token(),
         cart_payload=_cart_payload(_cart(), menu.items_by_id),
@@ -535,23 +604,8 @@ def api_slots():
     allowed = {choice["iso"] for choice in _date_choices()}
     if day.isoformat() not in allowed:
         return jsonify({"error": "That date is not available for ordering."}), 400
-    slots = []
-    for slot in _slots(day):
-        remaining = slot["remaining"]
-        status = (
-            "Full"
-            if remaining == 0
-            else f"{remaining} pizza{'s' if remaining != 1 else ''} available"
-        )
-        slots.append(
-            {
-                "iso": slot["iso"],
-                "time": slot["time"],
-                "available": slot["available"],
-                "remaining": remaining,
-                "status": status,
-            }
-        )
+    menu = _menu(allow_stale=True)
+    slots = _slot_payload(day, menu, _pizza_counts(menu))
     return jsonify({"date": day.isoformat(), "slots": slots})
 
 
@@ -567,7 +621,7 @@ def api_select_slot():
     if _slot_capacity(selected) is None:
         return jsonify({"error": "That pickup time is no longer available."}), 400
 
-    menu = _menu()
+    menu = _menu(allow_stale=True)
     remaining = _remaining(selected, menu)
     required_pizzas = max(1, cart_totals(_cart(), menu.items_by_id)["pizza_count"])
     if remaining < required_pizzas:
@@ -576,6 +630,7 @@ def api_select_slot():
         ), 409
 
     session["service_at"] = selected.isoformat()
+    session["service_at_remaining"] = remaining
     return jsonify(
         {
             "service_at": selected.isoformat(),
@@ -587,14 +642,16 @@ def api_select_slot():
 
 @storefront.get("/api/cart")
 def api_get_cart():
-    return jsonify(_cart_payload(_cart(), _menu().items_by_id))
+    return jsonify(
+        _cart_payload(_cart(), _menu(allow_stale=True).items_by_id)
+    )
 
 
 @storefront.post("/api/cart")
 def api_add_to_cart():
     _require_csrf()
     data = request.get_json(silent=True) or {}
-    menu = _menu()
+    menu = _menu(allow_stale=True)
     items_by_id = menu.items_by_id
     item = items_by_id.get(data.get("item_id"))
     if not item or not item.available:
@@ -630,9 +687,13 @@ def api_add_to_cart():
     except CartLimitError as error:
         return jsonify({"error": str(error)}), 409
 
-    selected = _selected_slot(menu)
+    selected = _selected_slot(menu, refresh_availability=False)
     pizza_count = cart_totals(lines, items_by_id)["pizza_count"]
-    if selected and pizza_count and _remaining(selected, menu) < pizza_count:
+    if (
+        selected
+        and pizza_count
+        and _selected_slot_remaining(selected, menu) < pizza_count
+    ):
         return jsonify(
             {"error": "Choose another pickup time before adding this item."}
         ), 409
@@ -646,7 +707,9 @@ def api_remove_from_cart(line_id: str):
     _require_csrf()
     lines = [line for line in _cart() if line["id"] != line_id]
     _save_cart(lines)
-    return jsonify(_cart_payload(lines, _menu().items_by_id))
+    return jsonify(
+        _cart_payload(lines, _menu(allow_stale=True).items_by_id)
+    )
 
 
 @storefront.patch("/api/cart/<line_id>")
@@ -660,7 +723,7 @@ def api_update_cart_quantity(line_id: str):
     if quantity < 1 or quantity > current_app.config["CART_TOTAL_LIMIT"]:
         return jsonify({"error": "Choose a valid quantity."}), 400
 
-    menu = _menu()
+    menu = _menu(allow_stale=True)
     items_by_id = menu.items_by_id
     lines = _cart()
     if not any(line["id"] == line_id for line in lines):
@@ -679,9 +742,13 @@ def api_update_cart_quantity(line_id: str):
     except CartLimitError as error:
         return jsonify({"error": str(error)}), 409
 
-    selected = _selected_slot(menu)
+    selected = _selected_slot(menu, refresh_availability=False)
     pizza_count = cart_totals(updated_lines, items_by_id)["pizza_count"]
-    if selected and pizza_count and _remaining(selected, menu) < pizza_count:
+    if (
+        selected
+        and pizza_count
+        and _selected_slot_remaining(selected, menu) < pizza_count
+    ):
         return jsonify(
             {"error": "Choose another pickup time before increasing this item."}
         ), 409
@@ -696,7 +763,7 @@ def api_checkout_quote():
     lines = _cart()
     if not lines:
         return jsonify({"error": "Your cart is empty."}), 400
-    menu = _menu()
+    menu = _menu(allow_stale=True)
     pricing = _pricing(lines, menu.items_by_id)
     if not current_app.config["DEMO_MODE"]:
         return jsonify(_checkout_totals(pricing, 0, "Choose on Square"))
@@ -727,11 +794,15 @@ def checkout():
     lines = _cart()
     if not lines:
         return redirect(url_for("storefront.index"))
-    menu = _menu()
+    menu = _menu(allow_stale=request.method == "POST")
     items_by_id = menu.items_by_id
+    availability_counts = (
+        _pizza_counts(menu) if request.method == "GET" else None
+    )
     selected = _selected_slot(
         menu,
         refresh_availability=request.method == "GET",
+        counts=availability_counts,
     )
     if not selected:
         return redirect(url_for("storefront.index"))
@@ -898,6 +969,7 @@ def checkout():
                     receipt_url=receipt_url,
                 )
     checkout_totals = _checkout_totals(pricing, tip_cents, tip_label)
+    date_choices = _date_choices()
     return render_template(
         "checkout.html",
         cart=_cart_payload(lines, items_by_id),
@@ -905,7 +977,12 @@ def checkout():
         selected=selected,
         selected_tip=selected_tip,
         custom_tip_value=custom_tip_value,
-        date_choices=_date_choices(),
+        date_choices=date_choices,
+        slots_by_date=(
+            _slots_by_date(menu, date_choices, availability_counts)
+            if availability_counts is not None
+            else {}
+        ),
         csrf_token=_csrf_token(),
         pizza_limit=current_app.config["CATEGORY_LIMITS"]["pizza"],
         total_limit=current_app.config["CART_TOTAL_LIMIT"],

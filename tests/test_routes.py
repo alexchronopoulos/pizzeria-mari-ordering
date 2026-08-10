@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.17.1" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.17.1" in response.data
-    assert b"/static/app.js?v=0.17.1" in response.data
+    assert b"/static/style.css?v=0.18" in response.data
+    assert b"/static/app.js?v=0.18" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.17.1",
+        "version": "0.18",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -337,6 +337,20 @@ def test_pickup_api_shows_remaining_pizzas_and_keeps_full_times_visible(app):
     assert b'class="slot-capacity"' in javascript.data
     assert b'class="slot-capacity"' in checkout_javascript.data
     assert b"slot-choice-unavailable" in checkout_javascript.data
+
+
+def test_pickup_dialog_renders_embedded_slots_before_refreshing(app):
+    client = app.test_client()
+    page = client.get("/")
+    javascript = client.get("/static/app.js").get_data(as_text=True)
+    checkout_javascript = client.get("/static/checkout.js").get_data(as_text=True)
+
+    assert b'"slotsByDate"' in page.data
+    for source in (javascript, checkout_javascript):
+        cached = source.index("const cached = slotCache.get(date);")
+        render = source.index("if (cached) renderSlots(cached);", cached)
+        refresh = source.index("const payload = await fetchSlots(date);", render)
+        assert cached < render < refresh
 
 
 def test_saved_full_pickup_is_replaced_by_the_next_available_slot(app):

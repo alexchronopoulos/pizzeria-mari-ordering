@@ -114,7 +114,8 @@
     "cart": cart_payload,
     "pizzaLimit": pizza_limit,
     "totalLimit": total_limit,
-    "selectedDate": selected.iso[:10] if selected else none
+    "selectedDate": selected.iso[:10] if selected else none,
+    "slotsByDate": slots_by_date
   }|tojson }};
 </script>
 <script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js', v=asset_version) }}" defer></script>
