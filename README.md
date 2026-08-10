@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.17 capabilities
+## Current v0.17.1 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -216,7 +216,7 @@ bash setup-git.sh
 
 It initializes the `master` branch, audits the public file set, installs the pre-commit credential check, and creates the first commit when Git identity is configured. GitHub Actions repeats the audit and all tests on pushes and pull requests.
 
-The repository excludes `.env`, databases, virtual environments, caches, logs, keys, downloaded ZIP archives, and licensed font binaries. The public source contains only empty Square placeholders. Keep local font files in `app/static/fonts/`; their expected names are documented in that directory.
+The repository excludes `.env`, databases, virtual environments, caches, logs, keys, downloaded ZIP archives, and unverified font binaries. The three storefront fonts in `app/static/fonts/` are explicitly allowlisted because their redistribution licenses have been verified. Their attribution and full license terms are included in `LICENSES/`. The public source contains only empty Square placeholders.
 
 ## References
 

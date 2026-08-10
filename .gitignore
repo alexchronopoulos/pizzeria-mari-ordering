@@ -10,11 +10,14 @@
 credentials.json
 service-account*.json
 
-# Licensed fonts stay local unless their licenses allow public redistribution
+# Font binaries stay local unless explicitly allowlisted below
 app/static/fonts/*.otf
 app/static/fonts/*.ttf
 app/static/fonts/*.woff
 app/static/fonts/*.woff2
+!app/static/fonts/compagnon-medium.otf
+!app/static/fonts/semplicita-book.otf
+!app/static/fonts/semplicita-book-italic.otf
 !app/static/fonts/README.md
 
 # Python

@@ -33,6 +33,9 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"Traditional Pies" in response.data
     assert b"Mari Pies" in response.data
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
+    assert b"<title>Pizzeria Mari Order Online</title>" in response.data
+    assert b'rel="icon" type="image/png"' in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.17.1" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -54,8 +57,13 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.17" in response.data
-    assert b"/static/app.js?v=0.17" in response.data
+    assert b"/static/style.css?v=0.17.1" in response.data
+    assert b"/static/app.js?v=0.17.1" in response.data
+
+    favicon = app.test_client().get("/static/images/PM_icon_black.png")
+    assert favicon.status_code == 200
+    assert favicon.mimetype == "image/png"
+    assert favicon.data.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
@@ -73,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.17",
+        "version": "0.17.1",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -212,6 +220,16 @@ def test_brand_typography_uses_compagnon_for_display_and_semplicita_for_body(app
     assert b".menu-card-copy > strong" in css.data
     assert b"font-family: var(--font-body)" in css.data
     assert b"Kalakala" not in css.data
+
+    for filename in (
+        "compagnon-medium.otf",
+        "semplicita-book.otf",
+        "semplicita-book-italic.otf",
+    ):
+        font = client.get(f"/static/fonts/{filename}")
+        assert font.status_code == 200
+        assert font.mimetype == "font/otf"
+        assert font.data
 
 
 def test_server_rejects_cart_above_pizza_limit(app):

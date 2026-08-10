@@ -40,6 +40,11 @@ BLOCKED_SUFFIXES = {
     ".woff",
     ".woff2",
 }
+REDISTRIBUTABLE_FONT_PATHS = {
+    Path("app/static/fonts/compagnon-medium.otf"),
+    Path("app/static/fonts/semplicita-book.otf"),
+    Path("app/static/fonts/semplicita-book-italic.otf"),
+}
 TOKEN_PATTERNS = {
     "private key": re.compile(
         r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
@@ -82,7 +87,10 @@ def blocked_path_reason(path: Path) -> str | None:
         return "credential or local configuration filename"
     if path.name.startswith(".env.") and path.name != ".env.example":
         return "environment-specific configuration filename"
-    if path.suffix.lower() in BLOCKED_SUFFIXES:
+    if (
+        path.suffix.lower() in BLOCKED_SUFFIXES
+        and relative not in REDISTRIBUTABLE_FONT_PATHS
+    ):
         return "credential or local data file extension"
     return None
 

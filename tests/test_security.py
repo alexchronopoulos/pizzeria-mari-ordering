@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app import create_app
+from scripts.audit_public_repo import ROOT, blocked_path_reason
 
 
 def test_testing_mode_is_isolated_from_real_square_environment(monkeypatch) -> None:
@@ -20,6 +21,20 @@ def test_testing_mode_is_isolated_from_real_square_environment(monkeypatch) -> N
     assert app.config["USE_SQUARE_DATA"] is False
     assert app.config["SQUARE_ENVIRONMENT"] == "sandbox"
     assert app.config["PUBLIC_BASE_URL"] == ""
+
+
+def test_public_repo_audit_allows_only_verified_font_files() -> None:
+    verified = (
+        "compagnon-medium.otf",
+        "semplicita-book.otf",
+        "semplicita-book-italic.otf",
+    )
+    for filename in verified:
+        path = ROOT / "app" / "static" / "fonts" / filename
+        assert blocked_path_reason(path) is None
+
+    unverified = ROOT / "app" / "static" / "fonts" / "unverified.otf"
+    assert blocked_path_reason(unverified) == "credential or local data file extension"
 
 
 def test_live_checkout_requires_a_valid_public_base_url() -> None:

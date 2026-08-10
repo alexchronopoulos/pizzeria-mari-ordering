@@ -4,7 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#005586">
-    <title>{% block title %}Pizzeria Mari{% endblock %}</title>
+    <title>{% block title %}Pizzeria Mari Order Online{% endblock %}</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/PM_icon_black.png', v=asset_version) }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/PM_icon_black.png', v=asset_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=asset_version) }}">
     {% block head %}{% endblock %}
   </head>
