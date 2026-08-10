@@ -25,7 +25,11 @@ from .capacity import SlotUnavailableError
 from .cart import CartLimitError, cart_totals, validate_cart
 from .menu import MenuItem, MenuSnapshot
 from .operations import log_event
-from .scheduling import is_valid_slot, service_dates, slots_for_date
+from .scheduling import (
+    pickup_service_dates,
+    pickup_slot_capacity,
+    pickup_slots_for_date,
+)
 from .square import SquareAPIError, SquareConfigurationError, new_attempt_id
 
 
@@ -99,8 +103,10 @@ def _menu() -> MenuSnapshot:
 
 
 def _date_choices() -> list[dict]:
-    days = service_dates(
+    days = pickup_service_dates(
         current_app.config["SERVICE_HOURS"],
+        current_app.config["PICKUP_SCHEDULE"],
+        current_app.config["PIZZA_SLOT_CAPACITY"],
         current_app.config["TIMEZONE"],
         current_app.config["ADVANCE_DAYS"],
         _now(),
@@ -126,29 +132,50 @@ def _pizza_counts(menu: MenuSnapshot) -> dict[str, int]:
 
 
 def _remaining(service_at: datetime, menu: MenuSnapshot) -> int:
+    capacity = _slot_capacity(service_at)
+    if capacity is None:
+        return 0
     confirmed = _pizza_counts(menu).get(service_at.isoformat(), 0)
-    return max(0, current_app.config["PIZZA_SLOT_CAPACITY"] - confirmed)
+    return max(0, capacity - confirmed)
 
 
-def _slots(day: date, menu: MenuSnapshot | None = None) -> list[dict]:
+def _slot_capacity(service_at: datetime) -> int | None:
+    return pickup_slot_capacity(
+        service_at,
+        current_app.config["SERVICE_HOURS"],
+        current_app.config["PICKUP_SCHEDULE"],
+        current_app.config["PIZZA_SLOT_CAPACITY"],
+        current_app.config["TIMEZONE"],
+        current_app.config["ADVANCE_DAYS"],
+        current_app.config["SLOT_INTERVAL_MINUTES"],
+        _now(),
+    )
+
+
+def _slots(
+    day: date,
+    menu: MenuSnapshot | None = None,
+    counts: dict[str, int] | None = None,
+) -> list[dict]:
     menu = menu or _menu()
     items_by_id = menu.items_by_id
     required_pizzas = max(1, cart_totals(_cart(), items_by_id)["pizza_count"])
-    capacity = current_app.config["PIZZA_SLOT_CAPACITY"]
-    counts = _pizza_counts(menu)
+    counts = _pizza_counts(menu) if counts is None else counts
     results = []
-    for slot in slots_for_date(
+    for slot in pickup_slots_for_date(
         day,
         current_app.config["SERVICE_HOURS"],
+        current_app.config["PICKUP_SCHEDULE"],
+        current_app.config["PIZZA_SLOT_CAPACITY"],
         current_app.config["TIMEZONE"],
         current_app.config["SLOT_INTERVAL_MINUTES"],
         _now(),
     ):
-        remaining = max(0, capacity - counts.get(slot.isoformat(), 0))
+        remaining = max(0, slot.capacity - counts.get(slot.at.isoformat(), 0))
         results.append(
             {
-                "iso": slot.isoformat(),
-                "time": slot.strftime("%-I:%M %p"),
+                "iso": slot.at.isoformat(),
+                "time": slot.at.strftime("%-I:%M %p"),
                 "remaining": remaining,
                 "required": required_pizzas,
                 "available": remaining >= required_pizzas,
@@ -157,30 +184,51 @@ def _slots(day: date, menu: MenuSnapshot | None = None) -> list[dict]:
     return results
 
 
-def _selected_slot(menu: MenuSnapshot | None = None) -> datetime | None:
+def _selected_slot(
+    menu: MenuSnapshot | None = None,
+    *,
+    refresh_availability: bool = True,
+) -> datetime | None:
     raw = session.get("service_at")
+    selected = None
     if raw:
         try:
-            selected = datetime.fromisoformat(raw)
-            if is_valid_slot(
-                selected,
-                current_app.config["SERVICE_HOURS"],
-                current_app.config["TIMEZONE"],
-                current_app.config["ADVANCE_DAYS"],
-                current_app.config["SLOT_INTERVAL_MINUTES"],
-                _now(),
-            ):
-                return selected
+            candidate = datetime.fromisoformat(raw)
+            if _slot_capacity(candidate) is not None:
+                selected = candidate
+                if not refresh_availability:
+                    return selected
         except ValueError:
             pass
 
     menu = menu or _menu()
-    for day in [date.fromisoformat(choice["iso"]) for choice in _date_choices()]:
-        first = next((slot for slot in _slots(day, menu) if slot["available"]), None)
-        if first:
-            selected = datetime.fromisoformat(first["iso"])
-            session["service_at"] = selected.isoformat()
-            return selected
+    counts = _pizza_counts(menu)
+    available_slots = [
+        slot
+        for day in [date.fromisoformat(choice["iso"]) for choice in _date_choices()]
+        for slot in _slots(day, menu, counts)
+        if slot["available"]
+    ]
+    if selected is not None and any(
+        slot["iso"] == selected.isoformat() for slot in available_slots
+    ):
+        return selected
+
+    first = next(
+        (
+            slot
+            for slot in available_slots
+            if selected is not None
+            and datetime.fromisoformat(slot["iso"]) > selected
+        ),
+        available_slots[0] if available_slots else None,
+    )
+    if first:
+        selected = datetime.fromisoformat(first["iso"])
+        session["service_at"] = selected.isoformat()
+        return selected
+
+    session.pop("service_at", None)
     return None
 
 
@@ -516,14 +564,7 @@ def api_select_slot():
     except (KeyError, ValueError, TypeError):
         return jsonify({"error": "Choose a valid pickup time."}), 400
 
-    if not is_valid_slot(
-        selected,
-        current_app.config["SERVICE_HOURS"],
-        current_app.config["TIMEZONE"],
-        current_app.config["ADVANCE_DAYS"],
-        current_app.config["SLOT_INTERVAL_MINUTES"],
-        _now(),
-    ):
+    if _slot_capacity(selected) is None:
         return jsonify({"error": "That pickup time is no longer available."}), 400
 
     menu = _menu()
@@ -688,7 +729,10 @@ def checkout():
         return redirect(url_for("storefront.index"))
     menu = _menu()
     items_by_id = menu.items_by_id
-    selected = _selected_slot(menu)
+    selected = _selected_slot(
+        menu,
+        refresh_availability=request.method == "GET",
+    )
     if not selected:
         return redirect(url_for("storefront.index"))
 
@@ -750,12 +794,17 @@ def checkout():
             customer = {"name": name, "email": email, "phone": phone}
             try:
                 if current_app.config["DEMO_MODE"]:
+                    selected_capacity = _slot_capacity(selected)
+                    if selected_capacity is None:
+                        raise SlotUnavailableError(
+                            "That pickup time is no longer available."
+                        )
                     order = current_app.extensions[
                         "capacity_store"
                     ].confirm_demo_order(
                         service_at=selected.isoformat(),
                         pizza_count=cart_totals(lines, items_by_id)["pizza_count"],
-                        capacity=current_app.config["PIZZA_SLOT_CAPACITY"],
+                        capacity=selected_capacity,
                     )
                     receipt_url = None
                 else:

@@ -12,6 +12,7 @@ from .capacity import DemoCapacityStore
 from .menu import StaticMenuProvider
 from .operations import configure_structured_logging
 from .routes import storefront
+from .scheduling import parse_pickup_schedule
 from .square import (
     SQUARE_API_VERSION,
     SquareCatalogProvider,
@@ -20,7 +21,7 @@ from .square import (
 )
 
 
-APP_VERSION = "0.16.1"
+APP_VERSION = "0.17"
 
 
 def _csv_setting(
@@ -96,6 +97,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PIZZA_SLOT_CAPACITY=_positive_integer(
             environment.get("PIZZA_SLOT_CAPACITY", "3"), "PIZZA_SLOT_CAPACITY"
         ),
+        PICKUP_SCHEDULE=environment.get("PICKUP_SCHEDULE", "").strip(),
         CART_TOTAL_LIMIT=_positive_integer(
             environment.get("CART_TOTAL_LIMIT", "8"), "CART_TOTAL_LIMIT"
         ),
@@ -165,9 +167,21 @@ def create_app(test_config: dict | None = None) -> Flask:
     for boolean_name in ("ORDERING_ENABLED",):
         if not isinstance(app.config[boolean_name], bool):
             raise RuntimeError(f"{boolean_name} must be either true or false.")
-    if app.config["PIZZA_CART_LIMIT"] > app.config["PIZZA_SLOT_CAPACITY"]:
+    app.config["PICKUP_SCHEDULE"] = parse_pickup_schedule(
+        app.config.get("PICKUP_SCHEDULE", ""),
+        app.config["SLOT_INTERVAL_MINUTES"],
+    )
+    configured_capacities = [
+        window[2]
+        for windows in app.config["PICKUP_SCHEDULE"].values()
+        for window in windows
+    ]
+    app.config["PIZZA_MAX_SLOT_CAPACITY"] = max(
+        [app.config["PIZZA_SLOT_CAPACITY"], *configured_capacities]
+    )
+    if app.config["PIZZA_CART_LIMIT"] > app.config["PIZZA_MAX_SLOT_CAPACITY"]:
         raise RuntimeError(
-            "PIZZA_CART_LIMIT cannot exceed PIZZA_SLOT_CAPACITY."
+            "PIZZA_CART_LIMIT cannot exceed the largest configured pickup-slot capacity."
         )
     if app.config["PIZZA_CART_LIMIT"] > app.config["CART_TOTAL_LIMIT"]:
         raise RuntimeError("PIZZA_CART_LIMIT cannot exceed CART_TOTAL_LIMIT.")

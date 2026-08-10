@@ -54,8 +54,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.16.1" in response.data
-    assert b"/static/app.js?v=0.16.1" in response.data
+    assert b"/static/style.css?v=0.17" in response.data
+    assert b"/static/app.js?v=0.17" in response.data
 
 
 def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
@@ -73,7 +73,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.16.1",
+        "version": "0.17",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -123,7 +123,7 @@ def test_capacity_thresholds_load_from_environment_and_reject_invalid_values(
 
 
 def test_capacity_threshold_relationships_are_validated():
-    with pytest.raises(RuntimeError, match="cannot exceed PIZZA_SLOT_CAPACITY"):
+    with pytest.raises(RuntimeError, match="largest configured pickup-slot capacity"):
         create_app(
             {
                 "TESTING": True,
@@ -142,6 +142,63 @@ def test_capacity_threshold_relationships_are_validated():
                 "CART_TOTAL_LIMIT": 3,
             }
         )
+
+
+def test_configured_three_pizza_window_can_exceed_two_pizza_default():
+    configured = create_app(
+        {
+            "TESTING": True,
+            "PIZZA_CART_LIMIT": 3,
+            "PIZZA_SLOT_CAPACITY": 2,
+            "PICKUP_SCHEDULE": '{"thursday":[{"start":"18:00","end":"20:00","pizzas":3}]}',
+        }
+    )
+
+    assert configured.config["PIZZA_MAX_SLOT_CAPACITY"] == 3
+    assert configured.config["CATEGORY_LIMITS"] == {"pizza": 3}
+
+
+def test_pickup_schedule_can_limit_hours_and_vary_capacity(app):
+    app.config["PICKUP_SCHEDULE"] = {
+        "thursday": (
+            ("17:00", "17:30", 2),
+            ("18:00", "18:30", 3),
+        ),
+        "sunday": (("14:00", "17:00", 2),),
+    }
+    client = app.test_client()
+
+    page = client.get("/")
+    assert b"Thursday, August 6 at 5:00 PM" in page.data
+
+    thursday = client.get("/api/slots?date=2026-08-06").get_json()["slots"]
+    assert [(slot["time"], slot["remaining"]) for slot in thursday] == [
+        ("5:00 PM", 2),
+        ("5:15 PM", 2),
+        ("5:30 PM", 2),
+        ("6:00 PM", 3),
+        ("6:15 PM", 3),
+        ("6:30 PM", 3),
+    ]
+
+    sunday = client.get("/api/slots?date=2026-08-09").get_json()["slots"]
+    assert sunday[0]["time"] == "2:00 PM"
+    assert sunday[-1]["time"] == "5:00 PM"
+    assert {slot["remaining"] for slot in sunday} == {2}
+
+
+def test_date_pickup_schedule_override_wins_over_weekday(app):
+    app.config["PICKUP_SCHEDULE"] = {
+        "thursday": (("16:00", "20:00", 2),),
+        "2026-08-06": (("18:00", "18:15", 3),),
+    }
+    client = app.test_client()
+
+    payload = client.get("/api/slots?date=2026-08-06").get_json()
+    assert [(slot["time"], slot["remaining"]) for slot in payload["slots"]] == [
+        ("6:00 PM", 3),
+        ("6:15 PM", 3),
+    ]
 
 
 def test_brand_typography_uses_compagnon_for_display_and_semplicita_for_body(app):
@@ -262,6 +319,32 @@ def test_pickup_api_shows_remaining_pizzas_and_keeps_full_times_visible(app):
     assert b'class="slot-capacity"' in javascript.data
     assert b'class="slot-capacity"' in checkout_javascript.data
     assert b"slot-choice-unavailable" in checkout_javascript.data
+
+
+def test_saved_full_pickup_is_replaced_by_the_next_available_slot(app):
+    full_slot = "2026-08-06T16:00:00-04:00"
+    next_slot = "2026-08-06T16:15:00-04:00"
+    app.extensions["capacity_store"].confirm_demo_order(
+        service_at=full_slot,
+        pizza_count=3,
+        capacity=3,
+        customer={"name": "Alex", "email": "alex@example.com", "phone": ""},
+        notes="",
+        tip_cents=0,
+        cart=[{"item_id": "plain", "quantity": 3}],
+    )
+
+    client = app.test_client()
+    with client.session_transaction() as browser_session:
+        browser_session["service_at"] = full_slot
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert b"Thursday, August 6 at 4:15 PM" in response.data
+    assert b"Thursday, August 6 at 4:00 PM" not in response.data
+    with client.session_transaction() as browser_session:
+        assert browser_session["service_at"] == next_slot
 
 
 def test_pickup_api_shows_partial_capacity_and_disables_slots_that_cannot_fit_cart(app):

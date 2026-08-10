@@ -2,11 +2,13 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.16.1 capabilities
+## Current v0.17 capabilities
 
-- Orders through seven days in advance with configured 15-minute pickup times.
-- Three-pizza cart and slot limits, plus a configurable eight-item overall limit.
+- Orders through seven days in advance with configurable 15-minute pickup times.
+- Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
+- Configurable pizza-cart and overall-item limits.
 - Every pickup time shows its remaining pizza capacity; full times remain visible and clearly labeled instead of disappearing.
+- A saved pickup time is rechecked when the storefront or checkout page opens; if it has filled, the next available time is selected automatically.
 - Compagnon display type, Semplicita body type, Pizzeria Mari colors, and responsive layouts.
 - Quantity controls on the menu and checkout, with preventative limit feedback.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
@@ -135,6 +137,39 @@ The split flow follows Square's delayed-capture sequence and should also receive
 
 The application does not cancel an abandoned partial gift-card authorization. Square controls the eventual release of that delayed authorization. If a customer reports an interrupted split payment, inspect the order and payment in Square before asking them to try again.
 
+## Pickup schedule and capacity
+
+The default schedule remains Thursday and Friday 4–8 PM, Saturday 11 AM–8 PM,
+and Sunday 11 AM–4 PM, with `PIZZA_SLOT_CAPACITY` pizzas at every pickup time.
+Leave `PICKUP_SCHEDULE` empty to keep those defaults.
+
+Set `PICKUP_SCHEDULE` to a JSON object to replace only the weekdays you want to
+adjust. Each window includes its first pickup time, last pickup time, and pizza
+capacity. End times are included. Times between windows are unavailable.
+
+This example delays Sunday pickup until 2 PM and allows two pizzas per slot. It
+also allows two pizzas early Thursday and three starting at 6 PM:
+
+```dotenv
+PICKUP_SCHEDULE='{"sunday":[{"start":"14:00","end":"17:00","pizzas":2}],"thursday":[{"start":"16:00","end":"17:45","pizzas":2},{"start":"18:00","end":"20:00","pizzas":3}]}'
+```
+
+In DigitalOcean, paste the JSON itself as the environment-variable value,
+without the surrounding single quotes.
+
+A `YYYY-MM-DD` key replaces the weekday schedule for that date only. This is
+useful for a one-service capacity test:
+
+```dotenv
+PICKUP_SCHEDULE='{"2026-08-13":[{"start":"16:00","end":"17:45","pizzas":2},{"start":"18:00","end":"20:00","pizzas":3}]}'
+```
+
+Date rules take precedence over weekday rules. An empty list closes pickup for
+that weekday or date. Weekdays and dates omitted from the JSON continue using
+the built-in schedule. All times must align to the 15-minute interval, windows
+cannot overlap, and configuration mistakes stop the app at startup with a clear
+error instead of publishing an unintended schedule.
+
 Cart and production thresholds are also configurable without editing source:
 
 ```dotenv
@@ -143,7 +178,9 @@ PIZZA_SLOT_CAPACITY=3
 CART_TOTAL_LIMIT=8
 ```
 
-All three values must be positive whole numbers. `PIZZA_CART_LIMIT` cannot exceed the per-slot capacity or the total-item cart limit; invalid combinations stop the app at startup with a clear configuration error.
+All three values must be positive whole numbers. `PIZZA_SLOT_CAPACITY` is the
+fallback for days omitted from `PICKUP_SCHEDULE`. `PIZZA_CART_LIMIT` cannot
+exceed the largest configured pickup-slot capacity or the total-item cart limit.
 
 The app pins Square API version `2026-07-15` in every request. Upgrade it deliberately after reviewing Square's release notes.
 

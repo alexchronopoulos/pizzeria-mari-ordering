@@ -29,9 +29,15 @@ PUBLIC_BASE_URL=https://order.pizzeriamari.com
 PIZZA_CART_LIMIT=3
 PIZZA_SLOT_CAPACITY=3
 CART_TOTAL_LIMIT=8
+PICKUP_SCHEDULE=
 ```
 
 Keep `SECRET_KEY` unchanged across deployments. Leave `ORDERING_ENABLED=false` through private Production testing.
+
+`PICKUP_SCHEDULE` is optional. For App Platform, enter raw JSON without shell or
+`.env` quote characters. The complete format and examples are in `README.md`.
+Changing it creates a new deployment; verify the displayed pickup days, times,
+and capacities before setting `ORDERING_ENABLED=true`.
 
 ## 3. Keep DNS in Route 53
 
@@ -56,7 +62,7 @@ Check health:
 curl --fail --show-error https://order.pizzeriamari.com/health
 ```
 
-It should report version `0.16.1` and `ordering_enabled: false`. The home page should show the Square fallback link.
+It should report version `0.17` and `ordering_enabled: false`. The home page should show the Square fallback link.
 
 Then run the Sandbox test matrix and these controlled Production transactions at the unadvertised URL:
 

@@ -8,6 +8,12 @@ Flask owns only the storefront presentation and Pizzeria Mari's simple cart and 
 
 ## Pickup availability
 
+The optional `PICKUP_SCHEDULE` configuration replaces selected weekday or
+specific-date pickup windows. Every configured window has its own pizza
+capacity; gaps do not generate pickup times. A specific date takes precedence
+over its weekday, while omitted days retain the built-in service schedule and
+default `PIZZA_SLOT_CAPACITY`.
+
 For each pickup time, the app searches Square orders and counts pizza quantities from paid `OPEN` and `COMPLETED` orders. Full times remain visible and show `Full`.
 
 Unpaid Square-hosted checkout drafts do not count. An app-created gift-card order counts only after `PayOrder` completes it. This means an abandoned checkout cannot block a pickup time and no cleanup or expiration job is needed.
