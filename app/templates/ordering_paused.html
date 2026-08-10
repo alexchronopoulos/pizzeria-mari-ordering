@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Ordering temporarily paused · Pizzeria Mari{% endblock %}
+{% block body %}
+<main class="confirmation-shell">
+  <section class="confirmation-card">
+    <span class="eyebrow">Ordering temporarily paused</span>
+    <h1>We’re not taking new orders here right now.</h1>
+    <p>Any Square checkout already in progress will still finish normally.</p>
+    {% if fallback_ordering_url %}
+      <a class="button button-primary" href="{{ fallback_ordering_url }}">Order through Square</a>
+    {% else %}
+      <a class="button button-primary" href="{{ url_for('storefront.index') }}">Return to the menu</a>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

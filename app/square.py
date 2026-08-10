@@ -5,10 +5,9 @@ import re
 import threading
 import time
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterator
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -27,10 +26,8 @@ SQUARE_BASE_URLS = {
     "sandbox": "https://connect.squareupsandbox.com",
     "production": "https://connect.squareup.com",
 }
-SQUARE_JS_URLS = {
-    "sandbox": "https://sandbox.web.squarecdn.com/v1/square.js",
-    "production": "https://web.squarecdn.com/v1/square.js",
-}
+CHECKOUT_REFERENCE_PREFIX = "PMOC-"
+GIFT_CARD_REFERENCE_PREFIX = "PMGC-"
 class SquareAPIError(RuntimeError):
     def __init__(
         self,
@@ -62,6 +59,7 @@ class SquareClient:
                 "SQUARE_ENVIRONMENT must be either sandbox or production."
             )
         self.base_url = SQUARE_BASE_URLS[environment]
+        self.environment = environment
         self.api_version = api_version
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -82,59 +80,45 @@ class SquareClient:
         *,
         params: dict | None = None,
         json_body: dict | None = None,
-        retry_safe: bool = False,
     ) -> dict:
-        attempts = 2 if retry_safe else 1
-        last_error: Exception | None = None
-        for attempt in range(attempts):
-            try:
-                response = self._client.request(
-                    method, path, params=params, json=json_body
-                )
-            except httpx.RequestError as exc:
-                last_error = exc
-                if attempt + 1 < attempts:
-                    continue
-                raise SquareAPIError(
-                    "Square could not be reached. Please try again.", ambiguous=True
-                ) from exc
-
-            if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < attempts:
-                continue
-            try:
-                payload = response.json() if response.content else {}
-            except ValueError:
-                payload = {}
-            if response.is_success:
-                return payload
-
-            errors = payload.get("errors", []) if isinstance(payload, dict) else []
-            detail = next(
-                (
-                    error.get("detail")
-                    for error in errors
-                    if isinstance(error, dict) and error.get("detail")
-                ),
-                None,
+        try:
+            response = self._client.request(
+                method, path, params=params, json=json_body
             )
-            if response.status_code in {401, 403}:
-                message = "Square rejected the configured credentials."
-            elif response.status_code == 404:
-                message = "A Square catalog item used by this order is no longer available."
-            elif response.status_code == 409:
-                message = "Square reported a conflicting update. Please try again."
-            elif response.status_code == 429:
-                message = "Square is temporarily busy. Please try again."
-            elif detail and response.status_code < 500:
-                message = detail
-            else:
-                message = "Square could not process the request. Please try again."
-            raise SquareAPIError(message, errors=errors)
+        except httpx.RequestError as exc:
+            raise SquareAPIError(
+                "Square could not be reached. Please try again.", ambiguous=True
+            ) from exc
 
-        raise SquareAPIError(
-            "Square could not be reached. Please try again.",
-            ambiguous=True,
-        ) from last_error
+        try:
+            payload = response.json() if response.content else {}
+        except ValueError:
+            payload = {}
+        if response.is_success:
+            return payload
+
+        errors = payload.get("errors", []) if isinstance(payload, dict) else []
+        detail = next(
+            (
+                error.get("detail")
+                for error in errors
+                if isinstance(error, dict) and error.get("detail")
+            ),
+            None,
+        )
+        if response.status_code in {401, 403}:
+            message = "Square rejected the configured credentials."
+        elif response.status_code == 404:
+            message = "A Square catalog item used by this order is no longer available."
+        elif response.status_code == 409:
+            message = "Square reported a conflicting update. Please try again."
+        elif response.status_code == 429:
+            message = "Square is temporarily busy. Please try again."
+        elif detail and response.status_code < 500:
+            message = detail
+        else:
+            message = "Square could not process the request. Please try again."
+        raise SquareAPIError(message, errors=errors)
 
     def list_catalog(self) -> list[dict]:
         objects: list[dict] = []
@@ -158,38 +142,42 @@ class SquareClient:
         )
         return payload["order"]
 
-    def create_order(self, order: dict, idempotency_key: str) -> dict:
+    def create_payment_link(self, request_body: dict) -> dict:
         payload = self.request(
+            "POST",
+            "/v2/online-checkout/payment-links",
+            json_body=request_body,
+        )
+        return payload
+
+    def create_order(self, request_body: dict) -> dict:
+        return self.request(
             "POST",
             "/v2/orders",
-            json_body={"order": order, "idempotency_key": idempotency_key},
-            retry_safe=True,
+            json_body=request_body,
         )
-        return payload["order"]
 
-    def create_payment(self, payment: dict) -> dict:
-        payload = self.request(
+    def create_payment(self, request_body: dict) -> dict:
+        return self.request(
             "POST",
             "/v2/payments",
-            json_body=payment,
-            retry_safe=True,
+            json_body=request_body,
         )
-        return payload["payment"]
 
-    def cancel_order(self, order: dict, idempotency_key: str) -> None:
-        self.request(
-            "PUT",
-            f"/v2/orders/{order['id']}",
-            json_body={
-                "order": {
-                    "location_id": order["location_id"],
-                    "version": order["version"],
-                    "state": "CANCELED",
-                },
-                "idempotency_key": idempotency_key,
-            },
-            retry_safe=True,
+    def pay_order(self, order_id: str, request_body: dict) -> dict:
+        return self.request(
+            "POST",
+            f"/v2/orders/{order_id}/pay",
+            json_body=request_body,
         )
+
+    def retrieve_order(self, order_id: str) -> dict:
+        payload = self.request("GET", f"/v2/orders/{order_id}")
+        return payload["order"]
+
+    def retrieve_payment(self, payment_id: str) -> dict:
+        payload = self.request("GET", f"/v2/payments/{payment_id}")
+        return payload["payment"]
 
     def search_orders(self, *, location_id: str, created_after: datetime) -> list[dict]:
         orders: list[dict] = []
@@ -201,7 +189,9 @@ class SquareClient:
                 "return_entries": False,
                 "query": {
                     "filter": {
-                        "state_filter": {"states": ["OPEN", "COMPLETED"]},
+                        "state_filter": {
+                            "states": ["DRAFT", "OPEN", "COMPLETED"]
+                        },
                         "date_time_filter": {
                             "created_at": {
                                 "start_at": created_after.astimezone(timezone.utc)
@@ -586,24 +576,13 @@ class SquareCatalogProvider:
         return tuple(additions), tuple(groups)
 
 
-class CheckoutLockManager:
-    """Single-process lease used locally; AWS replaces this with a DynamoDB lease."""
-
-    def __init__(self) -> None:
-        self._guard = threading.Lock()
-        self._locks: dict[str, threading.Lock] = {}
-
-    @contextmanager
-    def acquire(self, service_at: str) -> Iterator[None]:
-        with self._guard:
-            lock = self._locks.setdefault(service_at, threading.Lock())
-        with lock:
-            yield
-
-
 class SquareCommerce:
     def __init__(
-        self, *, client: SquareClient, location_id: str, timezone_name: str
+        self,
+        *,
+        client: SquareClient,
+        location_id: str,
+        timezone_name: str,
     ) -> None:
         self.client = client
         self.location_id = location_id
@@ -627,6 +606,19 @@ class SquareCommerce:
         )
         counts: dict[str, int] = {}
         for order in orders:
+            state = order.get("state")
+            if state not in {"OPEN", "COMPLETED"}:
+                continue
+            if (
+                state == "OPEN"
+                and str(order.get("reference_id", "")).startswith(
+                    GIFT_CARD_REFERENCE_PREFIX
+                )
+            ):
+                # App-created gift-card orders become COMPLETED when PayOrder
+                # succeeds. Ignore unfinished orders just as we ignore hosted
+                # checkout drafts; only paid orders consume displayed capacity.
+                continue
             pickup_at = None
             for fulfillment in order.get("fulfillments", []):
                 if fulfillment.get("type") == "PICKUP":
@@ -736,22 +728,37 @@ class SquareCommerce:
             "order_total_cents": order_total,
         }
 
-    def place_order(
+    @staticmethod
+    def _checkout_url(payload: dict, environment: str) -> str:
+        payment_link = payload.get("payment_link", {})
+        checkout_url = payment_link.get("url", "")
+        parsed = urlparse(checkout_url)
+        expected_host = (
+            "sandbox.square.link" if environment == "sandbox" else "square.link"
+        )
+        if parsed.scheme != "https" or parsed.hostname != expected_host:
+            raise SquareAPIError(
+                "Square returned an invalid hosted checkout address. Please try again."
+            )
+        return checkout_url
+
+    def create_checkout(
         self,
         *,
-        source_id: str,
         attempt_id: str,
         lines: list[dict],
         items_by_id: dict[str, MenuItem],
         service_at: datetime,
         customer: dict,
         notes: str,
-        tip_cents: int,
-        expected_order_total_cents: int,
+        redirect_url: str,
     ) -> dict:
-        reference = attempt_id.replace("-", "")[:40]
-        order = self.client.create_order(
-            self.order_payload(
+        reference = f"{CHECKOUT_REFERENCE_PREFIX}{attempt_id.replace('-', '')}"[:40]
+        request_body = {
+            # Square requires this field. It identifies only this API call and
+            # is not retained or reused by the application.
+            "idempotency_key": str(uuid.uuid4()),
+            "order": self.order_payload(
                 lines=lines,
                 items_by_id=items_by_id,
                 service_at=service_at,
@@ -759,42 +766,262 @@ class SquareCommerce:
                 notes=notes,
                 reference_id=reference,
             ),
-            f"order-{attempt_id}",
-        )
-        order_amount = int(order["total_money"]["amount"])
-        if order_amount != expected_order_total_cents:
-            try:
-                self.client.cancel_order(order, f"changed-{attempt_id}")
-            except SquareAPIError:
-                pass
-            raise SquareAPIError(
-                "Your total changed before payment. Review the new total and try again."
-            )
-        payment_request = {
-            "source_id": source_id,
-            "idempotency_key": f"payment-{attempt_id}",
-            "amount_money": {"amount": order_amount, "currency": "USD"},
-            "order_id": order["id"],
-            "location_id": self.location_id,
-            "autocomplete": True,
-            "buyer_email_address": customer["email"],
-            "reference_id": reference,
+            "checkout_options": {
+                "allow_tipping": True,
+                "enable_coupon": True,
+                "redirect_url": redirect_url,
+            },
         }
-        if tip_cents:
-            payment_request["tip_money"] = {
-                "amount": tip_cents,
-                "currency": "USD",
+
+        payload = self.client.create_payment_link(request_body)
+        payment_link = payload.get("payment_link", {})
+        if not payment_link.get("id") or not payment_link.get("order_id"):
+            raise SquareAPIError(
+                "Square did not return a complete hosted checkout. Please try again."
+            )
+        return {
+            "payment_link": payment_link,
+            "checkout_url": self._checkout_url(payload, self.client.environment),
+        }
+
+    def create_gift_card_checkout(
+        self,
+        *,
+        attempt_id: str,
+        lines: list[dict],
+        items_by_id: dict[str, MenuItem],
+        service_at: datetime,
+        customer: dict,
+        notes: str,
+    ) -> dict:
+        reference = (
+            f"{GIFT_CARD_REFERENCE_PREFIX}{attempt_id.replace('-', '')}"[:40]
+        )
+        payload = self.client.create_order(
+            {
+                "idempotency_key": str(uuid.uuid4()),
+                "order": self.order_payload(
+                    lines=lines,
+                    items_by_id=items_by_id,
+                    service_at=service_at,
+                    customer=customer,
+                    notes=notes,
+                    reference_id=reference,
+                ),
             }
-        try:
-            payment = self.client.create_payment(payment_request)
-        except SquareAPIError as exc:
-            if not exc.ambiguous:
-                try:
-                    self.client.cancel_order(order, f"cancel-{attempt_id}")
-                except SquareAPIError:
-                    pass
-            raise
-        return {"order": order, "payment": payment}
+        )
+        order = payload.get("order")
+        if not order or not order.get("id"):
+            raise SquareAPIError(
+                "Square did not return a complete gift-card order. Please try again."
+            )
+        return {"order": order}
+
+    def checkout_result(self, order_id: str) -> dict:
+        order = self.client.retrieve_order(order_id)
+        if order.get("state") == "CANCELED":
+            return {
+                "status": "CANCELED",
+                "order": order,
+                "payment": None,
+                "payments": [],
+            }
+        if order.get("state") == "DRAFT":
+            return {
+                "status": "PENDING",
+                "order": order,
+                "payment": None,
+                "payments": [],
+            }
+        payments = self._payments_for_order(order)
+        payment = payments[-1] if payments else None
+        if order.get("state") == "COMPLETED":
+            status = "COMPLETED"
+        elif any(item.get("status") == "COMPLETED" for item in payments):
+            status = "COMPLETED"
+        elif any(item.get("status") == "FAILED" for item in payments):
+            status = "FAILED"
+        else:
+            status = "PENDING"
+        return {
+            "status": status,
+            "order": order,
+            "payment": payment,
+            "payments": payments,
+        }
+
+    @staticmethod
+    def _payment_id(tender: dict) -> str | None:
+        return tender.get("payment_id") or tender.get("id")
+
+    def _payments_for_order(self, order: dict) -> list[dict]:
+        payments = []
+        for tender in order.get("tenders", []):
+            payment_id = self._payment_id(tender)
+            if payment_id:
+                payments.append(self.client.retrieve_payment(payment_id))
+        return payments
+
+    @staticmethod
+    def _payment_amount(payment: dict) -> int:
+        return int(payment.get("amount_money", {}).get("amount", 0))
+
+    @staticmethod
+    def _is_gift_card_payment(payment: dict) -> bool:
+        card = payment.get("card_details", {}).get("card", {})
+        return (
+            payment.get("source_type") == "GIFT_CARD"
+            or card.get("card_brand") == "SQUARE_GIFT_CARD"
+        )
+
+    def gift_card_checkout_state(self, order_id: str) -> dict:
+        order = self.client.retrieve_order(order_id)
+        payments = self._payments_for_order(order)
+        authorized = [
+            payment
+            for payment in payments
+            if payment.get("status") in {"APPROVED", "COMPLETED"}
+        ]
+        total_cents = int(order.get("total_money", {}).get("amount", 0))
+        paid_cents = sum(self._payment_amount(payment) for payment in authorized)
+        return {
+            "status": (
+                "CANCELED"
+                if order.get("state") == "CANCELED"
+                else "COMPLETED"
+                if order.get("state") == "COMPLETED"
+                else "PENDING"
+            ),
+            "order": order,
+            "payments": payments,
+            "payment": payments[-1] if payments else None,
+            "payment_ids": [payment["id"] for payment in authorized],
+            "total_cents": total_cents,
+            "paid_cents": paid_cents,
+            "remaining_cents": max(0, total_cents - paid_cents),
+            "gift_card_applied": any(
+                self._is_gift_card_payment(payment) for payment in authorized
+            ),
+        }
+
+    def apply_gift_card_payment(
+        self,
+        *,
+        order_id: str,
+        attempt_id: str,
+        payment_method: str,
+        source_id: str,
+    ) -> dict:
+        state = self.gift_card_checkout_state(order_id)
+        order = state["order"]
+        expected_reference = (
+            f"{GIFT_CARD_REFERENCE_PREFIX}{attempt_id.replace('-', '')}"[:40]
+        )
+        if order.get("reference_id") != expected_reference:
+            raise SquareAPIError("That gift-card checkout is no longer valid.")
+        if state["status"] == "CANCELED":
+            raise SquareAPIError("That gift-card checkout was canceled.")
+        if state["status"] == "COMPLETED":
+            return state
+        if state["remaining_cents"] == 0:
+            raise SquareAPIError(
+                "This payment is already awaiting completion in Square."
+            )
+        if payment_method not in {"gift_card", "card"}:
+            raise SquareAPIError("Choose a valid payment method.")
+        if payment_method == "gift_card" and state["gift_card_applied"]:
+            raise SquareAPIError("A gift card has already been applied to this order.")
+        if payment_method == "card" and not state["gift_card_applied"]:
+            raise SquareAPIError("Apply a Square gift card before paying the remainder by card.")
+        request_body = {
+            "source_id": source_id,
+            "idempotency_key": str(uuid.uuid4()),
+            "amount_money": {
+                "amount": state["remaining_cents"],
+                "currency": "USD",
+            },
+            "autocomplete": False,
+            "order_id": order_id,
+            "location_id": self.location_id,
+            "note": "Pizzeria Mari online gift-card checkout",
+        }
+        if payment_method == "gift_card":
+            request_body["accept_partial_authorization"] = True
+
+        payload = self.client.create_payment(request_body)
+        payment = payload.get("payment")
+        if not payment or not payment.get("id"):
+            raise SquareAPIError(
+                "Square did not return a complete payment. Please try again."
+            )
+        if payment.get("status") != "APPROVED":
+            raise SquareAPIError(
+                "Square did not authorize that payment. Please use another payment method."
+            )
+        if payment_method == "gift_card" and not self._is_gift_card_payment(payment):
+            raise SquareAPIError("Enter a valid Pizzeria Mari Square gift card.")
+
+        paid_cents = state["paid_cents"] + self._payment_amount(payment)
+        remaining_cents = max(0, state["total_cents"] - paid_cents)
+        payment_ids = [*state["payment_ids"], payment["id"]]
+        if remaining_cents > 0:
+            return {
+                **state,
+                "status": "PARTIAL",
+                "applied_cents": self._payment_amount(payment),
+                "paid_cents": paid_cents,
+                "remaining_cents": remaining_cents,
+                "payment_ids": payment_ids,
+            }
+        completed = self.complete_gift_card_checkout(
+            order_id=order_id,
+            attempt_id=attempt_id,
+            state={
+                **state,
+                "paid_cents": paid_cents,
+                "remaining_cents": 0,
+                "payment_ids": payment_ids,
+            },
+        )
+        completed["payment"] = payment
+        return completed
+
+    def complete_gift_card_checkout(
+        self,
+        *,
+        order_id: str,
+        attempt_id: str,
+        state: dict | None = None,
+    ) -> dict:
+        state = state or self.gift_card_checkout_state(order_id)
+        expected_reference = (
+            f"{GIFT_CARD_REFERENCE_PREFIX}{attempt_id.replace('-', '')}"[:40]
+        )
+        if state["order"].get("reference_id") != expected_reference:
+            raise SquareAPIError("That gift-card checkout is no longer valid.")
+        if state["status"] == "COMPLETED":
+            return state
+        if state["status"] == "CANCELED":
+            raise SquareAPIError("That gift-card checkout was canceled.")
+        if state["remaining_cents"] != 0 or not state["payment_ids"]:
+            raise SquareAPIError("This order still has an unpaid balance.")
+        pay_body = {
+            "idempotency_key": str(uuid.uuid4()),
+            "payment_ids": state["payment_ids"],
+        }
+        paid_payload = self.client.pay_order(order_id, pay_body)
+        paid_order = paid_payload.get("order")
+        if not paid_order or paid_order.get("state") != "COMPLETED":
+            raise SquareAPIError(
+                "Square authorized the payments but has not completed the order yet. Please wait a moment and check again."
+            )
+        return {
+            **state,
+            "status": "COMPLETED",
+            "order": paid_order,
+            "remaining_cents": 0,
+        }
+
 
 
 def new_attempt_id() -> str:

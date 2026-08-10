@@ -3,24 +3,24 @@ from __future__ import annotations
 import os
 import secrets
 from collections.abc import Mapping
+from urllib.parse import urlparse
 
 from flask import Flask, g
 from dotenv import load_dotenv
 
 from .capacity import DemoCapacityStore
 from .menu import StaticMenuProvider
+from .operations import configure_structured_logging
 from .routes import storefront
 from .square import (
-    CheckoutLockManager,
     SQUARE_API_VERSION,
-    SQUARE_JS_URLS,
     SquareCatalogProvider,
     SquareClient,
     SquareCommerce,
 )
 
 
-APP_VERSION = "0.12.0"
+APP_VERSION = "0.16.1"
 
 
 def _csv_setting(
@@ -50,9 +50,19 @@ def _positive_integer(value: object, name: str) -> int:
     return parsed
 
 
+def _boolean_setting(
+    environment: Mapping[str, str], name: str, default: str
+) -> bool:
+    value = environment.get(name, default).strip().lower()
+    if value not in {"true", "false"}:
+        raise RuntimeError(f"{name} must be either true or false.")
+    return value == "true"
+
+
 def create_app(test_config: dict | None = None) -> Flask:
     testing = bool(test_config and test_config.get("TESTING"))
-    if not testing:
+    running_under_pytest = "PYTEST_CURRENT_TEST" in os.environ
+    if not testing and not running_under_pytest:
         load_dotenv()
 
     # Tests must be reproducible on machines that have a real Square .env.
@@ -61,6 +71,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     demo_mode = environment.get("DEMO_MODE", "true").lower() == "true"
     configured_secret = environment.get("SECRET_KEY", "").strip()
+    square_application_id = environment.get("SQUARE_APPLICATION_ID", "").strip()
 
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
@@ -88,6 +99,12 @@ def create_app(test_config: dict | None = None) -> Flask:
         CART_TOTAL_LIMIT=_positive_integer(
             environment.get("CART_TOTAL_LIMIT", "8"), "CART_TOTAL_LIMIT"
         ),
+        ORDERING_ENABLED=_boolean_setting(
+            environment, "ORDERING_ENABLED", "true"
+        ),
+        FALLBACK_ORDERING_URL=environment.get(
+            "FALLBACK_ORDERING_URL", ""
+        ).strip(),
         SALES_TAX_RATE=0.08,
         APP_VERSION=APP_VERSION,
         SERVICE_HOURS={
@@ -97,13 +114,15 @@ def create_app(test_config: dict | None = None) -> Flask:
             6: ("11:00", "16:00"),  # Sunday
         },
         SQUARE_ENVIRONMENT=environment.get("SQUARE_ENVIRONMENT", "sandbox").lower(),
+        PUBLIC_BASE_URL=environment.get("PUBLIC_BASE_URL", "").strip().rstrip("/"),
         SQUARE_CATALOG_ENABLED=environment.get(
             "SQUARE_CATALOG_ENABLED", "false"
         ).lower()
         == "true",
-        SQUARE_APPLICATION_ID=environment.get("SQUARE_APPLICATION_ID", "").strip(),
         SQUARE_LOCATION_ID=environment.get("SQUARE_LOCATION_ID", "").strip(),
         SQUARE_ACCESS_TOKEN=environment.get("SQUARE_ACCESS_TOKEN", "").strip(),
+        SQUARE_APPLICATION_ID=square_application_id,
+        SQUARE_GIFT_CARDS_ENABLED=bool(square_application_id),
         SQUARE_API_VERSION=environment.get(
             "SQUARE_API_VERSION", SQUARE_API_VERSION
         ).strip(),
@@ -143,12 +162,21 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config[threshold_name] = _positive_integer(
             app.config[threshold_name], threshold_name
         )
+    for boolean_name in ("ORDERING_ENABLED",):
+        if not isinstance(app.config[boolean_name], bool):
+            raise RuntimeError(f"{boolean_name} must be either true or false.")
     if app.config["PIZZA_CART_LIMIT"] > app.config["PIZZA_SLOT_CAPACITY"]:
         raise RuntimeError(
             "PIZZA_CART_LIMIT cannot exceed PIZZA_SLOT_CAPACITY."
         )
     if app.config["PIZZA_CART_LIMIT"] > app.config["CART_TOTAL_LIMIT"]:
         raise RuntimeError("PIZZA_CART_LIMIT cannot exceed CART_TOTAL_LIMIT.")
+    if app.config.get("SQUARE_GIFT_CARDS_ENABLED") and not str(
+        app.config.get("SQUARE_APPLICATION_ID", "")
+    ).strip():
+        raise RuntimeError(
+            "SQUARE_APPLICATION_ID must be set when Square gift cards are enabled."
+        )
     app.config["CATEGORY_LIMITS"] = {
         "pizza": app.config["PIZZA_CART_LIMIT"]
     }
@@ -166,7 +194,56 @@ def create_app(test_config: dict | None = None) -> Flask:
             "SECRET_KEY must be set to a private value of at least 32 characters when DEMO_MODE is false."
         )
 
-    app.extensions["checkout_locks"] = CheckoutLockManager()
+    if not app.config["DEMO_MODE"]:
+        public_url = urlparse(app.config["PUBLIC_BASE_URL"])
+        if (
+            public_url.scheme not in {"http", "https"}
+            or not public_url.netloc
+            or public_url.path not in {"", "/"}
+            or public_url.params
+            or public_url.query
+            or public_url.fragment
+        ):
+            raise RuntimeError(
+                "PUBLIC_BASE_URL must be the public origin of this site, such as https://order.example.com."
+            )
+        if (
+            app.config["SQUARE_ENVIRONMENT"] == "production"
+            and public_url.scheme != "https"
+        ):
+            raise RuntimeError(
+                "PUBLIC_BASE_URL must use https in Square production mode."
+            )
+        if (
+            app.config.get("SQUARE_GIFT_CARDS_ENABLED")
+            and public_url.scheme != "https"
+        ):
+            raise RuntimeError(
+                "PUBLIC_BASE_URL must use https when Square gift cards are enabled."
+            )
+
+    fallback_url = app.config.get("FALLBACK_ORDERING_URL", "")
+    if fallback_url:
+        parsed_fallback = urlparse(fallback_url)
+        if (
+            parsed_fallback.scheme not in {"http", "https"}
+            or not parsed_fallback.netloc
+            or parsed_fallback.username
+            or parsed_fallback.password
+        ):
+            raise RuntimeError(
+                "FALLBACK_ORDERING_URL must be a complete http or https URL."
+            )
+        if (
+            not app.config["DEMO_MODE"]
+            and app.config["SQUARE_ENVIRONMENT"] == "production"
+            and parsed_fallback.scheme != "https"
+        ):
+            raise RuntimeError(
+                "FALLBACK_ORDERING_URL must use https in Square production mode."
+            )
+
+    configure_structured_logging(app)
     square_data_enabled = bool(
         app.config["SQUARE_CATALOG_ENABLED"] or not app.config["DEMO_MODE"]
     )
@@ -179,10 +256,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     if not square_data_enabled:
         app.extensions["menu_provider"] = StaticMenuProvider()
         app.extensions["square_commerce"] = None
-        app.config["SQUARE_JS_URL"] = None
     else:
         required = (
-            "SQUARE_APPLICATION_ID",
             "SQUARE_LOCATION_ID",
             "SQUARE_ACCESS_TOKEN",
         )
@@ -211,16 +286,12 @@ def create_app(test_config: dict | None = None) -> Flask:
             ),
             cache_seconds=app.config["SQUARE_CATALOG_CACHE_SECONDS"],
         )
-        app.extensions["square_commerce"] = SquareCommerce(
+        commerce = SquareCommerce(
             client=client,
             location_id=app.config["SQUARE_LOCATION_ID"],
             timezone_name=app.config["TIMEZONE"],
         )
-        app.config["SQUARE_JS_URL"] = (
-            None
-            if app.config["DEMO_MODE"]
-            else SQUARE_JS_URLS[app.config["SQUARE_ENVIRONMENT"]]
-        )
+        app.extensions["square_commerce"] = commerce
 
     app.register_blueprint(storefront)
 
@@ -233,6 +304,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         return {
             "csp_nonce": g.get("csp_nonce", ""),
             "asset_version": app.config["APP_VERSION"],
+            "ordering_enabled": app.config["ORDERING_ENABLED"],
+            "fallback_ordering_url": app.config["FALLBACK_ORDERING_URL"],
         }
 
     @app.after_request
@@ -242,25 +315,44 @@ def create_app(test_config: dict | None = None) -> Flask:
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         if not app.config["DEMO_MODE"]:
             nonce = g.get("csp_nonce", "")
-            sandbox = app.config["SQUARE_ENVIRONMENT"] == "sandbox"
-            sdk_origin = (
+            gift_cards_enabled = bool(
+                app.config.get("SQUARE_GIFT_CARDS_ENABLED")
+            )
+            square_web_origin = (
                 "https://sandbox.web.squarecdn.com"
-                if sandbox
+                if app.config["SQUARE_ENVIRONMENT"] == "sandbox"
                 else "https://web.squarecdn.com"
             )
-            pci_origin = (
+            square_pci_origin = (
                 "https://pci-connect.squareupsandbox.com"
-                if sandbox
+                if app.config["SQUARE_ENVIRONMENT"] == "sandbox"
                 else "https://pci-connect.squareup.com"
             )
+            script_sources = f"script-src 'self' 'nonce-{nonce}'"
+            connect_sources = "connect-src 'self'"
+            style_sources = "style-src 'self' 'unsafe-inline'"
+            font_sources = "font-src 'self'"
+            frame_sources = "frame-src 'none'"
+            if gift_cards_enabled:
+                script_sources += f" {square_web_origin}"
+                connect_sources += (
+                    f" {square_web_origin} {square_pci_origin}"
+                    " https://o160250.ingest.sentry.io"
+                )
+                style_sources += f" {square_web_origin}"
+                font_sources += (
+                    " https://square-fonts-production-f.squarecdn.com"
+                    " https://d1g145x70srn7h.cloudfront.net"
+                )
+                frame_sources = f"frame-src 'self' {square_web_origin}"
             response.headers["Content-Security-Policy"] = "; ".join(
                 (
                     "default-src 'self'",
-                    f"script-src 'self' 'nonce-{nonce}' {sdk_origin}",
-                    f"frame-src 'self' {sdk_origin}",
-                    f"connect-src 'self' {sdk_origin} {pci_origin} https://o160250.ingest.sentry.io",
-                    f"style-src 'self' 'unsafe-inline' {sdk_origin}",
-                    "font-src 'self' https://square-fonts-production-f.squarecdn.com https://d1g145x70srn7h.cloudfront.net",
+                    script_sources,
+                    connect_sources,
+                    style_sources,
+                    font_sources,
+                    frame_sources,
                     "img-src 'self' data: https:",
                     "object-src 'none'",
                     "base-uri 'self'",

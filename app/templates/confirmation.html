@@ -16,6 +16,9 @@
     <p>This prototype reserved the slot locally, but it did not charge a card, create a Square order, or send an email.</p>
   {% else %}
     <p>Your payment and scheduled pickup order are confirmed in Square.</p>
+    {% if payment_mode|default('hosted') == 'gift_card' %}
+      <p>Square does not automatically email receipts for gift-card checkout. You can open your Square receipt below.</p>
+    {% endif %}
     {% if receipt_url %}<p><a class="button button-light" href="{{ receipt_url }}" target="_blank" rel="noopener">View Square receipt</a></p>{% endif %}
   {% endif %}
   <a class="button button-dark" href="{{ url_for('storefront.index') }}">Return to menu</a>

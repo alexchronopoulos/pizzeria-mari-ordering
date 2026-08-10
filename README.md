@@ -2,11 +2,11 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.12 capabilities
+## Current v0.16.1 capabilities
 
 - Orders through seven days in advance with configured 15-minute pickup times.
 - Three-pizza cart and slot limits, plus a configurable eight-item overall limit.
-- Full pickup times remain visible and clearly labeled instead of disappearing.
+- Every pickup time shows its remaining pizza capacity; full times remain visible and clearly labeled instead of disappearing.
 - Compagnon display type, Semplicita body type, Pizzeria Mari colors, and responsive layouts.
 - Quantity controls on the menu and checkout, with preventative limit feedback.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
@@ -15,11 +15,19 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Every other customer-facing modifier list attached to an item is rendered and validated automatically, including Square's inherited/unlimited selection rules.
 - Square's Sides, Desserts, Salads, and Drinks categories appear as regular main-menu sections while their old upsell modifier lists remain hidden.
 - Square-calculated taxes and automatic catalog discounts.
-- Square Web Payments SDK card tokenization; raw card details never reach Flask.
+- Square-hosted Checkout for cards and available digital wallets; raw payment details never reach Flask.
+- Optional Square gift-card checkout through the Web Payments SDK. One gift card can cover the order or be combined with a credit/debit card for the remainder on the same Square order.
+- Delayed capture for gift-card and remainder-card payments. Square captures both only after their authorized amounts equal the order total.
 - Scheduled Square pickup orders with the buyer, pickup time, notes, catalog-backed items, and catalog-backed modifiers.
-- Square Payments API charges with a 15% default tip, custom tips, order ID, buyer email, and idempotency keys.
+- Square-managed tips, eligible Square Marketing coupons, payment processing, and native emailed receipts.
+- Only paid Square orders consume displayed pickup capacity. Unpaid hosted drafts and unfinished gift-card orders are ignored.
 - Square scheduled orders are queried to calculate slot usage; no catalog, customer, payment, or order database exists in the app.
-- The cart and pickup choice live only in Flask's signed browser-session cookie.
+- The cart, pickup choice, and short-lived checkout handoff live only in Flask's signed browser-session cookie.
+- Gift-card and card numbers are tokenized inside Square-hosted fields. Flask receives a short-lived single-use Square token and never stores or returns it.
+- Production Gunicorn configuration for one worker with four threads.
+- A lightweight `/health` endpoint for App Platform and external monitoring.
+- An `ORDERING_ENABLED` emergency switch and configurable Square Online fallback link. New checkout creation pauses without interrupting payments already underway.
+- Compact JSON application logs containing checkout-attempt, Square order, pickup, and state identifiers without customer or payment details.
 
 The local demo uses temporary in-memory slot counters that disappear on restart. Live Square mode does not use them.
 
@@ -33,7 +41,7 @@ uv sync --extra dev
 uv run pytest
 ```
 
-Create an application in the [Square Developer Console](https://developer.squareup.com/apps), then copy its Application ID, Access Token, and Location ID into the ignored `.env` file. Never paste the access token into source code, Git, chat, browser JavaScript, or a public issue.
+Create an application in the [Square Developer Console](https://developer.squareup.com/apps), then copy its Access Token and Location ID into the ignored `.env` file. Never paste the access token into source code, Git, chat, browser JavaScript, or a public issue.
 
 To inspect a real Square catalog without creating orders or charging cards, use:
 
@@ -41,7 +49,6 @@ To inspect a real Square catalog without creating orders or charging cards, use:
 DEMO_MODE=true
 SQUARE_CATALOG_ENABLED=true
 SQUARE_ENVIRONMENT=production
-SQUARE_APPLICATION_ID=your-production-application-id
 SQUARE_LOCATION_ID=your-production-location-id
 SQUARE_ACCESS_TOKEN=your-production-access-token
 ```
@@ -65,9 +72,11 @@ DEMO_MODE=false
 SECRET_KEY=generate-a-long-random-value
 SQUARE_CATALOG_ENABLED=true
 SQUARE_ENVIRONMENT=sandbox
-SQUARE_APPLICATION_ID=your-sandbox-application-id
 SQUARE_LOCATION_ID=your-sandbox-location-id
 SQUARE_ACCESS_TOKEN=your-sandbox-access-token
+# Public identifier from the same Sandbox application. Setting it enables gift cards.
+SQUARE_APPLICATION_ID=your-sandbox-application-id
+PUBLIC_BASE_URL=https://your-test-ordering-host.example
 ```
 
 Generate the secret locally with:
@@ -76,7 +85,13 @@ Generate the secret locally with:
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Square's [Sandbox test cards](https://developer.squareup.com/docs/devtools/sandbox/payments) can then create paid scheduled orders in the Sandbox account. The Web Payments SDK script and backend API host change automatically with `SQUARE_ENVIRONMENT`.
+`PUBLIC_BASE_URL` is the exact origin the buyer's browser should return to after Square, with no path or trailing slash. Production requires HTTPS. Square's [Sandbox test cards](https://developer.squareup.com/docs/devtools/sandbox/payments) can then create paid scheduled orders in the Sandbox account.
+
+The default payment choice creates a one-use Square payment link. Square shows tipping and eligible coupon controls, collects payment, emails its receipt, and redirects the buyer to this app for verified confirmation.
+
+When `SQUARE_APPLICATION_ID` is set, checkout also offers **Pay with a Square Gift Card**. That path creates one scheduled Square order, tokenizes the gift card directly with Square, accepts a partial authorization when needed, and collects the remainder through Square's embedded card field. `PayOrder` then captures all approved payments together, so Square Dashboard shows one order with both tenders.
+
+Gift-card checkout intentionally does not offer online tipping or Marketing coupons. Payments API orders provide a Square receipt link on the confirmation page, but Square does not automatically email that receipt. Customers who want tips, coupons, digital wallets, or Square's emailed receipt can use the default hosted option.
 
 Do not set `SQUARE_ENVIRONMENT=production` with `DEMO_MODE=false` until the controlled-launch checklist is complete. Production mode charges real cards.
 
@@ -103,6 +118,23 @@ Catalog results are held in process memory for 30 seconds by default to keep pag
 SQUARE_CATALOG_CACHE_SECONDS=30
 ```
 
+Pickup availability is intentionally simple. The site reads scheduled orders from Square and counts paid `OPEN` and `COMPLETED` orders. Unpaid hosted-checkout drafts and unfinished app-created gift-card orders are ignored, so an abandoned checkout cannot block a pickup time. There is no webhook, background cleanup, expiration job, or checkout-capacity recheck.
+
+## Testing gift-card payments
+
+Use the Sandbox Application ID, Location ID, and Access Token from the same Square application. The gift-card page must be served over HTTPS. Square documents `7783 3200 0000 0000` as its Web Payments SDK test gift-card number for a successful full gift-card payment.
+
+For the split-payment test, create an active Sandbox gift card whose balance is lower than the order total, then enter that card and use Square's Sandbox Visa `4111 1111 1111 1111` for the remainder. Verify in Sandbox Square Dashboard that:
+
+- there is one scheduled pickup order, not two;
+- the gift-card and card payments both appear as tenders on that order;
+- the order is `COMPLETED` only after the second payment;
+- the pickup slot is counted only after the complete order is paid.
+
+The split flow follows Square's delayed-capture sequence and should also receive one controlled Production test with a real Pizzeria Mari gift card before launch.
+
+The application does not cancel an abandoned partial gift-card authorization. Square controls the eventual release of that delayed authorization. If a customer reports an interrupted split payment, inspect the order and payment in Square before asking them to try again.
+
 Cart and production thresholds are also configurable without editing source:
 
 ```dotenv
@@ -115,13 +147,25 @@ All three values must be positive whole numbers. `PIZZA_CART_LIMIT` cannot excee
 
 The app pins Square API version `2026-07-15` in every request. Upgrade it deliberately after reviewing Square's release notes.
 
-## What remains before production
+## Production deployment
 
-- A short-lived DynamoDB lease so multiple redundant Lambda instances serialize checkout for the same pickup slot. It will contain only a slot key, random lease owner, and expiry—not menu, cart, customer, payment, or order data.
-- Webhook reconciliation for the rare case where a Square payment succeeds but the browser or network disappears before confirmation.
-- Confirmation email delivery. Square returns a receipt URL but the Payments API does not provide a general “email this receipt” action, so the app will send the Square receipt link through SES without retaining customer data.
-- Coupon and gift-card redemption. The field remains visible but clearly reports that redemption is not connected yet.
-- AWS deployment, monitoring, and a controlled production launch.
+The initial production topology is deliberately one DigitalOcean App Platform instance with one Gunicorn worker and four threads. This is a simple, comfortably sized starting point for the expected traffic rather than a correctness requirement.
+
+Use:
+
+```bash
+gunicorn --config gunicorn.conf.py run:app
+```
+
+Keep DNS in Route 53 and point a CNAME such as `order.pizzeriamari.com` to the target DigitalOcean displays. See [DEPLOYMENT.md](DEPLOYMENT.md) for the complete environment, custom-domain, monitoring, pause, and rollout setup.
+
+The remaining launch work is operational testing rather than another application feature release:
+
+- complete the full Sandbox matrix twice;
+- complete the controlled Production card, gift-card, and split-payment transactions;
+- verify every order in Square and the Production Dashboard;
+- rehearse pause, fallback, and DigitalOcean rollback;
+- soft-launch to trusted regulars before publishing the link.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the transaction boundary and deployment plan.
 
@@ -139,8 +183,11 @@ The repository excludes `.env`, databases, virtual environments, caches, logs, k
 
 ## References
 
-- [Square Web Payments SDK quickstart](https://developer.squareup.com/docs/web-payments/quickstart/add-sdk-to-web-client)
+- [Square Checkout API](https://developer.squareup.com/docs/checkout-api)
+- [Square order checkout](https://developer.squareup.com/docs/checkout-api/square-order-checkout)
+- [Optional hosted-checkout configuration](https://developer.squareup.com/docs/checkout-api/optional-checkout-configurations)
+- [Square gift-card payments](https://developer.squareup.com/docs/web-payments/gift-cards-intro)
+- [Partial gift-card walkthrough](https://developer.squareup.com/docs/web-payments/gift-card-walkthrough)
+- [Split online payments](https://developer.squareup.com/docs/commerce/scenarios/split-online-payment)
+- [DigitalOcean App Platform custom domains](https://docs.digitalocean.com/products/app-platform/how-to/manage-domains/)
 - [Square Catalog API](https://developer.squareup.com/docs/catalog-api/what-it-does)
-- [Create Square orders](https://developer.squareup.com/docs/orders-api/create-orders)
-- [Pay for Square orders](https://developer.squareup.com/docs/orders-api/pay-for-orders)
-- [Square Web Payments content security policy](https://developer.squareup.com/docs/web-payments/content-security-policy)

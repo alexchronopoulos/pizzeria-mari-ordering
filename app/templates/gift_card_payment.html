@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Pay with a gift card · Pizzeria Mari{% endblock %}
+{% block head %}
+  <meta name="csrf-token" content="{{ csrf_token }}">
+{% endblock %}
+
+{% block body %}
+<main class="gift-payment-shell">
+  <section class="gift-payment-card">
+    <span class="eyebrow">Square gift card</span>
+    <h1>Complete your payment</h1>
+    <p class="confirmation-time">Pickup is <strong>{{ selected.strftime('%A, %B %-d at %-I:%M %p') }}</strong>.</p>
+
+    <div class="gift-balance" aria-live="polite">
+      <span>Order total</span><strong id="gift-order-total">{{ '$%.2f'|format(payment_state.totalCents / 100) }}</strong>
+      <span id="gift-applied-label" {% if not payment_state.giftCardApplied %}hidden{% endif %}>Gift card applied</span>
+      <strong id="gift-applied-total" {% if not payment_state.giftCardApplied %}hidden{% endif %}>{{ '$%.2f'|format(payment_state.paidCents / 100) }}</strong>
+      <span>Amount remaining</span><strong id="gift-remaining-total">{{ '$%.2f'|format(payment_state.remainingCents / 100) }}</strong>
+    </div>
+
+    <p class="payment-status" id="payment-status" role="status" aria-live="polite"></p>
+    <p class="form-error gift-payment-error" id="payment-error" role="alert" hidden></p>
+
+    <section id="gift-card-step" {% if payment_state.giftCardApplied %}hidden{% endif %}>
+      <h2>1. Apply your gift card</h2>
+      <p>Enter the number from a Pizzeria Mari Square gift card. If it does not cover the full order, you can pay the remainder by card.</p>
+      <div class="square-payment-element" id="gift-card-container" aria-label="Square gift card number"></div>
+      <button class="button button-primary button-block" id="gift-card-button" type="button">Apply gift card</button>
+    </section>
+
+    <section id="remainder-card-step" {% if not payment_state.giftCardApplied %}hidden{% endif %}>
+      <h2>2. Pay the remainder</h2>
+      <p>Your gift card has been applied. Enter a credit or debit card for the remaining balance.</p>
+      <div class="square-payment-element" id="card-container" aria-label="Credit or debit card details"></div>
+      <button class="button button-primary button-block" id="remainder-card-button" type="button">Pay remaining {{ '$%.2f'|format(payment_state.remainingCents / 100) }}</button>
+    </section>
+
+    <div class="gift-payment-notes">
+      <p>Payment details are entered directly into Square's secure fields and never pass through Pizzeria Mari's server.</p>
+      <p>Online tips, Marketing coupons, and automatic receipt emails are not available with gift-card checkout. A Square receipt link appears after payment.</p>
+    </div>
+
+    <a class="text-button" href="{{ url_for('storefront.checkout') }}">Return to checkout</a>
+  </section>
+</main>
+
+<script nonce="{{ csp_nonce }}">
+  window.GIFT_CARD_DATA = {{ {
+    "applicationId": square_application_id,
+    "locationId": square_location_id,
+    "attemptId": pending.attempt_id,
+    "giftCardApplied": payment_state.giftCardApplied,
+    "paidCents": payment_state.paidCents,
+    "remainingCents": payment_state.remainingCents,
+    "totalCents": payment_state.totalCents,
+    "billingContact": billing_contact
+  }|tojson }};
+</script>
+<script nonce="{{ csp_nonce }}" src="{{ square_sdk_url }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='gift-card.js', v=asset_version) }}" defer></script>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Complete payment · Pizzeria Mari{% endblock %}
+
+{% block body %}
+<main class="confirmation-shell payment-pending-shell">
+  <span class="eyebrow">Square checkout</span>
+  <h1>Your payment is not confirmed yet.</h1>
+  <p class="confirmation-time">This checkout is for pickup <strong>{{ selected.strftime('%A, %B %-d at %-I:%M %p') }}</strong>.</p>
+  <p>If you just paid, Square may still be finishing the order. Check again in a moment. Otherwise, return to the secure Square page to complete payment.</p>
+  <div class="pending-actions">
+    <a class="button button-primary" href="{{ pending.checkout_url }}">Return to Square</a>
+    <a class="button button-light" href="{{ url_for('storefront.checkout_complete', attempt=pending.attempt_id) }}">Check payment status</a>
+  </div>
+</main>
+{% endblock %}

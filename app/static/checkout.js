@@ -7,8 +7,25 @@
   const customTipInput = document.querySelector('#custom-tip');
   const checkoutForm = document.querySelector('#checkout-form');
   const checkoutButton = document.querySelector('.checkout-submit');
-  const paymentStatus = document.querySelector('#payment-status');
-  let squareCard = null;
+
+  const selectedPaymentMethod = () => (
+    document.querySelector('input[name="payment_method"]:checked')?.value || 'hosted'
+  );
+
+  const updatePaymentMethod = () => {
+    if (data.demoMode) return;
+    data.paymentMethod = selectedPaymentMethod();
+    const giftCard = data.paymentMethod === 'gift_card';
+    document.querySelector('#live-tip-summary').textContent = giftCard
+      ? 'Not available online'
+      : 'Choose on Square';
+    document.querySelector('#grand-total-label').textContent = giftCard
+      ? 'Total'
+      : 'Total before tip';
+    checkoutButton.textContent = giftCard
+      ? `Continue to gift card · ${money(data.orderTotalCents)}`
+      : `Continue to Square · ${money(data.orderTotalCents)} before tip`;
+  };
 
   const escapeHtml = (value) => String(value)
     .replaceAll('&', '&amp;')
@@ -34,6 +51,13 @@
   };
 
   const updateTip = () => {
+    if (!data.demoMode) {
+      document.querySelector('#grand-total').textContent = money(data.orderTotalCents);
+      document.querySelector('#submit-total').textContent = money(data.orderTotalCents);
+      document.querySelector('#verification-total-cents').value = String(data.orderTotalCents);
+      updatePaymentMethod();
+      return data.orderTotalCents;
+    }
     const choice = document.querySelector('input[name="tip_choice"]:checked')?.value || '15';
     customTipWrap.hidden = choice !== 'custom';
     let tipCents = 0;
@@ -59,9 +83,12 @@
       0,
       Math.round((Number.parseFloat(customTipInput?.value) || 0) * 100),
     );
+    const body = data.demoMode
+      ? { tip_choice: choice, custom_tip_cents: customTipCents }
+      : {};
     const quote = await api('/api/checkout-quote', {
       method: 'POST',
-      body: JSON.stringify({ tip_choice: choice, custom_tip_cents: customTipCents }),
+      body: JSON.stringify(body),
     });
     data.subtotalCents = quote.subtotal_cents;
     data.tipBasisCents = quote.tip_basis_cents;
@@ -121,6 +148,9 @@
     input.addEventListener('change', updateTip);
   });
   customTipInput?.addEventListener('input', updateTip);
+  document.querySelectorAll('input[name="payment_method"]').forEach((input) => {
+    input.addEventListener('change', updatePaymentMethod);
+  });
 
   document.querySelector('#summary-lines')?.addEventListener('click', async (event) => {
     const removeButton = event.target.closest('[data-remove-line]');
@@ -154,18 +184,6 @@
     }
   });
 
-  document.querySelector('#apply-code')?.addEventListener('click', () => {
-    const code = document.querySelector('#discount-code').value.trim();
-    const message = document.querySelector('#code-message');
-    if (!code) {
-      message.textContent = 'Enter a coupon or gift card code first.';
-      message.classList.add('field-note-error');
-      return;
-    }
-    message.textContent = 'Coupon and gift card redemption will be connected in the next Square step.';
-    message.classList.add('field-note-error');
-  });
-
   const loadSlots = async (date) => {
     slotGrid.innerHTML = '<p>Loading pickup times…</p>';
     document.querySelectorAll('.date-choice').forEach((button) => {
@@ -174,9 +192,9 @@
     try {
       const payload = await api(`/api/slots?date=${encodeURIComponent(date)}`);
       slotGrid.innerHTML = payload.slots.map((slot) => `
-        <button class="slot-choice${slot.available ? '' : ' slot-choice-unavailable'}" type="button" data-service-at="${slot.iso}" ${slot.available ? '' : 'disabled'}>
+        <button class="slot-choice${slot.available ? '' : ' slot-choice-unavailable'}" type="button" data-service-at="${slot.iso}" aria-label="${escapeHtml(`${slot.time}, ${slot.status}`)}" ${slot.available ? '' : 'disabled'}>
           <strong>${slot.time}</strong>
-          ${slot.status ? `<span>${escapeHtml(slot.status)}</span>` : ''}
+          <span class="slot-capacity">${escapeHtml(slot.status)}</span>
         </button>
       `).join('') || '<p>No pickup times are available for this day.</p>';
     } catch (error) {
@@ -218,55 +236,16 @@
     if (event.target === pickupDialog) pickupDialog.close();
   });
 
-  const initializeSquareCard = async () => {
-    if (data.demoMode) return;
-    if (!window.Square) throw new Error('Square’s secure card form did not load. Refresh and try again.');
-    const payments = window.Square.payments(
-      data.squareApplicationId,
-      data.squareLocationId,
-    );
-    squareCard = await payments.card();
-    await squareCard.attach('#card-container');
-  };
-
-  checkoutForm?.addEventListener('submit', async (event) => {
-    if (data.demoMode || document.querySelector('#source-id').value) return;
-    event.preventDefault();
-    paymentStatus.textContent = '';
+  checkoutForm?.addEventListener('submit', () => {
+    updateTip();
     checkoutButton.disabled = true;
     checkoutButton.setAttribute('aria-busy', 'true');
-    try {
-      if (!squareCard) throw new Error('The secure card form is still loading. Try again in a moment.');
-      const totalCents = updateTip();
-      const nameParts = new FormData(checkoutForm).get('name').trim().split(/\s+/);
-      const tokenResult = await squareCard.tokenize({
-        amount: (totalCents / 100).toFixed(2),
-        billingContact: {
-          givenName: nameParts[0] || '',
-          familyName: nameParts.slice(1).join(' '),
-          email: new FormData(checkoutForm).get('email'),
-          phone: new FormData(checkoutForm).get('phone'),
-          countryCode: 'US',
-        },
-        currencyCode: data.currencyCode,
-        intent: 'CHARGE',
-        customerInitiated: true,
-        sellerKeyedIn: false,
-      });
-      if (tokenResult.status !== 'OK') {
-        throw new Error(tokenResult.errors?.[0]?.message || 'Check your card details and try again.');
-      }
-      document.querySelector('#source-id').value = tokenResult.token;
-      HTMLFormElement.prototype.submit.call(checkoutForm);
-    } catch (error) {
-      paymentStatus.textContent = error.message;
-      checkoutButton.disabled = false;
-      checkoutButton.removeAttribute('aria-busy');
-    }
+    checkoutButton.textContent = data.demoMode
+      ? 'Placing demo order…'
+      : (selectedPaymentMethod() === 'gift_card'
+        ? 'Preparing gift-card payment…'
+        : 'Opening Square…');
   });
 
   renderSummary(data.cart);
-  initializeSquareCard().catch((error) => {
-    if (paymentStatus) paymentStatus.textContent = error.message;
-  });
 })();

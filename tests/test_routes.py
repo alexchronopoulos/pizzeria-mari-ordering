@@ -54,8 +54,48 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.12.0" in response.data
-    assert b"/static/app.js?v=0.12.0" in response.data
+    assert b"/static/style.css?v=0.16.1" in response.data
+    assert b"/static/app.js?v=0.16.1" in response.data
+
+
+def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
+    paused = create_app(
+        {
+            "TESTING": True,
+            "SECRET_KEY": "test",
+            "ORDERING_ENABLED": False,
+            "FALLBACK_ORDERING_URL": "https://pizzeriamari.square.site",
+        }
+    )
+    client = paused.test_client()
+
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.get_json() == {
+        "status": "ok",
+        "version": "0.16.1",
+        "ordering_enabled": False,
+    }
+    assert health.headers["Cache-Control"] == "no-store"
+
+    page = client.get("/")
+    assert page.status_code == 200
+    assert b"not taking new orders" in page.data
+    assert b"https://pizzeriamari.square.site" in page.data
+    assert client.get("/checkout").status_code == 503
+
+
+def test_emergency_switch_and_fallback_configuration_are_validated():
+    with pytest.raises(RuntimeError, match="ORDERING_ENABLED must be"):
+        create_app({"TESTING": True, "ORDERING_ENABLED": "sometimes"})
+
+    with pytest.raises(RuntimeError, match="FALLBACK_ORDERING_URL must be"):
+        create_app(
+            {
+                "TESTING": True,
+                "FALLBACK_ORDERING_URL": "javascript:alert(1)",
+            }
+        )
 
 
 def test_capacity_thresholds_load_from_environment_and_reject_invalid_values(
@@ -66,6 +106,7 @@ def test_capacity_thresholds_load_from_environment_and_reject_invalid_values(
     monkeypatch.setenv("PIZZA_CART_LIMIT", "4")
     monkeypatch.setenv("PIZZA_SLOT_CAPACITY", "5")
     monkeypatch.setenv("CART_TOTAL_LIMIT", "6")
+    monkeypatch.setenv("ORDERING_ENABLED", "true")
 
     configured = create_app()
     assert configured.config["PIZZA_CART_LIMIT"] == 4
@@ -182,7 +223,7 @@ def test_cart_quantity_controls_and_three_pizza_button_message_are_present(app):
     assert b"quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit" in javascript.data
 
 
-def test_pickup_api_keeps_full_times_visible_without_capacity_counts(app):
+def test_pickup_api_shows_remaining_pizzas_and_keeps_full_times_visible(app):
     service_at = "2026-08-06T16:00:00-04:00"
     app.extensions["capacity_store"].confirm_demo_order(
         service_at=service_at,
@@ -197,20 +238,62 @@ def test_pickup_api_keeps_full_times_visible_without_capacity_counts(app):
     client = app.test_client()
     payload = client.get("/api/slots?date=2026-08-06").get_json()
     assert payload["slots"]
-    assert set(payload["slots"][0]) == {"iso", "time", "available", "status"}
+    assert set(payload["slots"][0]) == {
+        "iso",
+        "time",
+        "available",
+        "remaining",
+        "status",
+    }
     assert payload["slots"][0] == {
         "iso": service_at,
         "time": "4:00 PM",
         "available": False,
+        "remaining": 0,
         "status": "Full",
     }
-    assert "remaining" not in payload["slots"][0]
+    assert payload["slots"][1]["remaining"] == 3
+    assert payload["slots"][1]["status"] == "3 pizzas available"
 
     javascript = client.get("/static/app.js")
     checkout_javascript = client.get("/static/checkout.js")
     assert b"slot-choice-unavailable" in javascript.data
     assert b"slot.status" in javascript.data
+    assert b'class="slot-capacity"' in javascript.data
+    assert b'class="slot-capacity"' in checkout_javascript.data
     assert b"slot-choice-unavailable" in checkout_javascript.data
+
+
+def test_pickup_api_shows_partial_capacity_and_disables_slots_that_cannot_fit_cart(app):
+    service_at = "2026-08-06T16:15:00-04:00"
+    app.extensions["capacity_store"].confirm_demo_order(
+        service_at=service_at,
+        pizza_count=2,
+        capacity=3,
+        customer={"name": "Alex", "email": "alex@example.com", "phone": ""},
+        notes="",
+        tip_cents=0,
+        cart=[{"item_id": "plain", "quantity": 2}],
+    )
+
+    client = app.test_client()
+    token = csrf(client)
+    added = client.post(
+        "/api/cart",
+        json={"item_id": "plain", "quantity": 2},
+        headers={"X-CSRF-Token": token},
+    )
+    assert added.status_code == 201
+
+    payload = client.get("/api/slots?date=2026-08-06").get_json()
+    partial = payload["slots"][1]
+    assert partial == {
+        "iso": service_at,
+        "time": "4:15 PM",
+        "available": False,
+        "remaining": 1,
+        "status": "1 pizza available",
+    }
 
 
 def test_addition_placement_is_validated_and_priced(app):
@@ -241,7 +324,7 @@ def test_preferences_are_removed_from_items_and_item_dialog(app):
     assert b"activeItem.preferences" not in javascript.data
 
 
-def test_checkout_shows_tax_default_tip_code_field_and_inline_pickup_change(app):
+def test_demo_checkout_shows_tax_default_tip_and_inline_pickup_change(app):
     client = app.test_client()
     token = csrf(client)
     client.post(
@@ -255,7 +338,8 @@ def test_checkout_shows_tax_default_tip_code_field_and_inline_pickup_change(app)
     assert b"$2.08" in response.data
     assert b"$31.98" in response.data
     assert b'name="tip_choice" value="15" checked' in response.data
-    assert b'id="discount-code"' in response.data
+    assert b'id="discount-code"' not in response.data
+    assert b"Square-hosted checkout" in response.data
     assert b'id="checkout-change-pickup"' in response.data
     assert b'id="summary-lines"' in response.data
     assert b"pizza spots" not in response.data

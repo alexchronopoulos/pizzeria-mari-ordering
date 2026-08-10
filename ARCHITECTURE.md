@@ -1,107 +1,42 @@
 # Production architecture
 
-## System of record
+## One system of record
 
-Square owns every piece of durable business data:
+Square owns the catalog, prices, taxes, discounts, customers, scheduled pickup orders, payments, tips, receipts, and order history. The Flask app does not maintain a database or copy those records.
 
-- catalog categories, items, variations, descriptions, images, prices, availability, and modifiers;
-- taxes and automatic catalog discounts;
-- buyers associated with payments;
-- scheduled pickup orders, order notes, payments, tips, and receipt URLs;
-- the order history used to calculate how many pizzas are already assigned to a pickup slot.
+Flask owns only the storefront presentation and Pizzeria Mari's simple cart and pickup rules. Its signed browser cookie holds the cart, selected pickup time, and the Square order identifier needed to display the result after payment. It never contains a gift-card number, card number, or Square payment token.
 
-Flask owns only presentation and rules. Its signed browser cookie contains the current cart and pickup selection. No application database contains catalog, cart, customer, payment, or order records.
+## Pickup availability
 
-The only production-side state outside Square is an expiring concurrency lease. A lease is coordination, not a business-data copy: it contains a pickup-slot key, a random owner value, and an expiry timestamp.
+For each pickup time, the app searches Square orders and counts pizza quantities from paid `OPEN` and `COMPLETED` orders. Full times remain visible and show `Full`.
 
-## Capacity calculation
+Unpaid Square-hosted checkout drafts do not count. An app-created gift-card order counts only after `PayOrder` completes it. This means an abandoned checkout cannot block a pickup time and no cleanup or expiration job is needed.
 
-For a requested pickup time, the app searches Square orders for the configured location, keeps scheduled pickup fulfillments for that exact time, and counts line-item quantities whose Square variation IDs belong to configured pizza categories.
+The selected time is validated while the customer browses and edits the cart. The app does not perform a second capacity read immediately before creating the Square checkout. Two customers can therefore choose the same remaining opening at nearly the same time; this matches the deliberately simple launch model for Pizzeria Mari's low, spread-out order volume.
 
-The customer sees only whether the time can fit the current cart. Full times stay visible as `Full`; partially occupied times that cannot fit the current cart stay visible as `Unavailable`. Remaining production counts are never returned to the browser.
+## Hosted Square checkout
 
-Cart-wide and per-category limits are checked in the browser for immediate feedback and checked again against the current Square catalog on the server.
+1. Flask asks Square to calculate the cart using live catalog items, taxes, and automatic discounts.
+2. On submit, Flask calls `CreatePaymentLink` once with the scheduled pickup fulfillment, customer contact information, notes, and Square catalog identifiers.
+3. The customer pays on Square's hosted page, where Square provides tips, eligible Marketing coupons, cards, available digital wallets, and its emailed receipt.
+4. Square redirects the browser to Flask. Flask retrieves the order and payment once, shows confirmation for a completed payment, and clears the cart.
 
-## Safe concurrent checkout
+Square requires an idempotency key on the create call. The app generates a fresh UUID for that individual request and does not store, reuse, or reconcile it.
 
-Square does not offer an atomic “create this order only if category capacity remains” operation. A short-lived per-slot lease closes that gap across redundant application instances:
+## Gift-card checkout
 
-1. Tokenize card details in the browser with Square Web Payments SDK. Raw card data never reaches Flask.
-2. Acquire the DynamoDB lease for the selected pickup slot with a conditional write.
-3. Re-read scheduled orders from Square and reject checkout if the cart no longer fits.
-4. Ask Square to calculate the current catalog price, taxes, and automatic discounts.
-5. Create an open Square order with catalog variation IDs, catalog modifier IDs, buyer details, notes, and scheduled pickup fulfillment. Its idempotency key is unique to the browser checkout attempt.
-6. Verify that Square's created order total matches the amount the buyer reviewed.
-7. Create one Square payment referencing that order and using a second idempotency key. Staff gratuity is sent as `tip_money`.
-8. On a definite payment failure, cancel the unpaid Square order before releasing the lease.
-9. On success, release the lease. The paid Square order is now the durable capacity record.
-10. If the payment result is ambiguous because of a network failure, leave the Square order intact, release only after reconciliation, and favor temporarily blocking capacity over overselling it.
+1. Flask creates one scheduled Square order.
+2. Square's Web Payments SDK tokenizes the gift card directly in the browser.
+3. Flask authorizes the gift card with partial authorization enabled.
+4. If a balance remains, Square's embedded card field tokenizes a credit or debit card for exactly that remainder.
+5. Flask calls `PayOrder` once with the approved payment IDs so Square captures the tenders together and completes one order.
 
-Because every checkout for the same slot holds the same lease while it checks capacity and creates its Square order, a second checkout sees the first order before it can make its own capacity decision.
+The app does not run payment locks, retries, cancellation, expiration, webhook reconciliation, or background recovery. Square requires fresh idempotency keys on `CreateOrder`, `CreatePayment`, and `PayOrder`; those keys identify only their individual calls and are not retained.
 
-## DynamoDB lease shape
+An interrupted partial gift-card payment can remain approved until Square releases it under Square's delayed-payment rules. If this happens, inspect the order and payment in Square before asking the customer to retry.
 
-Only one record type is required:
+## Production hosting
 
-| Field | Example | Purpose |
-| --- | --- | --- |
-| Partition key | `SLOT#2026-08-06T16:15:00-04:00` | One lock per pickup slot |
-| Owner | random UUID | Prevents one request from releasing another's lease |
-| Expires at | Unix timestamp | Recovers abandoned leases |
+DigitalOcean App Platform terminates HTTPS and runs one Gunicorn `gthread` worker with four threads. `/health` is the platform and external-monitoring endpoint. Route 53 remains the DNS provider, and a CNAME such as `order.pizzeriamari.com` points to the App Platform target.
 
-No customer name, email, phone, cart, catalog object, amount, payment ID, or order ID is stored in DynamoDB.
-
-## Square responsibilities
-
-- Catalog API loads only explicitly allowed regular categories and their items, variations, images, sold-out state, and attached modifier lists.
-- Square's Whole Pie Additions list is the canonical visible option set. Matching First Half and Second Half list entries supply the placement-specific catalog IDs and prices, and all three lists render as one picker.
-- Square's `-1` item-level modifier sentinel inherits the list-level minimum and maximum; a zero maximum is normalized as unlimited before browser or server validation.
-- Modifier lists configured as customer-hidden in `.env` are filtered in memory and never copied into application storage.
-- CalculateOrder supplies taxes and automatic catalog discounts shown at checkout.
-- Orders API creates the scheduled `PICKUP` fulfillment.
-- Web Payments SDK securely renders card entry and creates a single-use token.
-- Payments API charges the card, records the staff tip, associates the payment with the order, and returns the receipt URL.
-- SearchOrders supplies durable pickup-slot usage.
-- Webhooks reconcile interrupted requests and external Square order changes.
-
-## AWS deployment
-
-- API Gateway HTTP API terminates HTTPS.
-- Lambda runs Flask across redundant infrastructure.
-- DynamoDB on-demand provides only the expiring checkout lease.
-- SES sends a confirmation containing Square's receipt URL without persisting recipient or order data.
-- EventBridge triggers reconciliation for ambiguous attempts if webhooks do not resolve them first.
-- CloudWatch alarms on payment, webhook, catalog, and lease failures.
-
-This keeps idle cost very low while removing the single-host failure mode. There is no SQL database and no duplicated application-side order store.
-
-## Delivery phases
-
-### Completed — interface and local rules
-
-- Menu, pickup-time, item modal, cart, checkout, tip, notes, and full-slot experience.
-- Three-pizza cart and slot behavior.
-- Branding, fonts, responsive layout, public-repository safeguards, and automated tests.
-
-### Current — Square connection
-
-- Live Catalog parsing and exact-category filtering.
-- Square modifier normalization and server validation.
-- Square order-derived slot counts.
-- Square pricing, scheduled order creation, Web Payments card tokenization, and idempotent payment creation.
-- Sandbox test coverage with no real credentials in the repository.
-
-### Next — production concurrency and reconciliation
-
-- DynamoDB lease implementation.
-- Payment and order webhooks.
-- Ambiguous-payment reconciliation and operational alerts.
-- Confirmation email containing the Square receipt link.
-- Gift-card split tender and the final coupon policy.
-
-### Final — controlled launch
-
-- Deploy with infrastructure as code.
-- Exercise simultaneous last-slot claims.
-- Reconcile taxes, tips, receipts, order notes, and Production Dashboard output.
-- Run live payments at a private URL before changing the public ordering link.
+`ORDERING_ENABLED=false` stops new checkout creation and displays the existing Square Online fallback. Existing Square returns and gift-card pages remain available. Paid orders remain safe in Square through deployments or application restarts.
