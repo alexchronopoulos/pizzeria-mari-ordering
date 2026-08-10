@@ -25,9 +25,22 @@
 
       <fieldset>
         <legend>Who is picking up?</legend>
-        <label>Full name<input name="name" autocomplete="name" value="{{ request.form.get('name', '') }}" required></label>
-        <label>Email<input name="email" type="email" autocomplete="email" value="{{ request.form.get('email', '') }}" required></label>
-        <label>Phone <span>Optional</span><input name="phone" type="tel" autocomplete="tel" value="{{ request.form.get('phone', '') }}"></label>
+        <label>
+          <span class="field-label">First name <span class="field-status field-status-required">Required</span></span>
+          <input name="first_name" autocomplete="given-name" value="{{ request.form.get('first_name', '') }}" required>
+        </label>
+        <label>
+          <span class="field-label">Last name <span class="field-status field-status-required">Required</span></span>
+          <input name="last_name" autocomplete="family-name" value="{{ request.form.get('last_name', '') }}" required>
+        </label>
+        <label>
+          <span class="field-label">Email <span class="field-status field-status-required">Required</span></span>
+          <input name="email" type="email" autocomplete="email" value="{{ request.form.get('email', '') }}" required>
+        </label>
+        <label>
+          <span class="field-label">Phone <span class="field-status field-status-required">Required</span></span>
+          <input name="phone" type="tel" autocomplete="tel" value="{{ request.form.get('phone', '') }}" required>
+        </label>
       </fieldset>
 
       {% if demo_mode %}
@@ -53,7 +66,7 @@
       {% endif %}
 
       <fieldset>
-        <legend>Order notes <span>Optional</span></legend>
+        <legend>Order notes <span class="field-status field-status-optional">Optional</span></legend>
         <label class="sr-only" for="notes">Order notes</label>
         <textarea id="notes" name="notes" maxlength="550" rows="4" placeholder="Allergies, substitutions, or anything else we should know?">{{ request.form.get('notes', '') }}</textarea>
       </fieldset>

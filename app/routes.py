@@ -56,13 +56,13 @@ def _percentage_cents(cents: int, percent: int) -> int:
 
 def _normalize_phone(value: str) -> str:
     if not value.strip():
-        return ""
+        raise ValueError("Enter a valid 10-digit US phone number.")
     digits = re.sub(r"\D", "", value)
     if len(digits) == 10:
         return f"+1{digits}"
     if len(digits) == 11 and digits.startswith("1"):
         return f"+{digits}"
-    raise ValueError("Enter a valid 10-digit US phone number or leave it blank.")
+    raise ValueError("Enter a valid 10-digit US phone number.")
 
 
 def _checkout_return_url(attempt_id: str) -> str:
@@ -821,12 +821,14 @@ def checkout():
     if request.method == "POST":
         _require_csrf()
         attempt_id = new_attempt_id()
-        name = request.form.get("name", "").strip()
+        first_name = request.form.get("first_name", "").strip()
+        last_name = request.form.get("last_name", "").strip()
+        name = " ".join(part for part in (first_name, last_name) if part)
         email = request.form.get("email", "").strip()
         raw_phone = request.form.get("phone", "").strip()
         notes = request.form.get("notes", "").strip()[:550]
-        if not name or "@" not in email:
-            error = "Enter your name and a valid email address."
+        if not first_name or not last_name or "@" not in email:
+            error = "Enter your first name, last name, and a valid email address."
         elif (
             not current_app.config["DEMO_MODE"]
             and payment_method not in {"hosted", "gift_card"}
@@ -840,7 +842,8 @@ def checkout():
         try:
             phone = _normalize_phone(raw_phone)
         except ValueError as exc:
-            error = str(exc)
+            if error is None:
+                error = str(exc)
             phone = ""
         if current_app.config["DEMO_MODE"]:
             try:

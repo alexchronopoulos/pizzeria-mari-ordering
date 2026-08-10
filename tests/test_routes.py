@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.1" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18" in response.data
-    assert b"/static/app.js?v=0.18" in response.data
+    assert b"/static/style.css?v=0.18.1" in response.data
+    assert b"/static/app.js?v=0.18.1" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18",
+        "version": "0.18.1",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -460,6 +460,68 @@ def test_demo_checkout_shows_tax_default_tip_and_inline_pickup_change(app):
     assert b"pizza spots" not in response.data
 
 
+def test_checkout_field_statuses_share_inline_typography(app):
+    client = app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "plain", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+
+    response = client.get("/checkout")
+    css = client.get("/static/style.css").get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert response.data.count(b"field-status field-status-required") == 4
+    assert response.data.count(b"field-status field-status-optional") == 1
+    assert b">First name <span class=" in response.data
+    assert b">Last name <span class=" in response.data
+    assert b">Email <span class=" in response.data
+    assert b">Phone <span class=" in response.data
+    assert b">Order notes <span class=" in response.data
+    assert b'name="first_name" autocomplete="given-name"' in response.data
+    assert b'name="last_name" autocomplete="family-name"' in response.data
+    assert b'name="phone" type="tel" autocomplete="tel"' in response.data
+    assert ".field-label { display: flex; align-items: baseline;" in css
+    assert ".field-status { color: #666;" in css
+    assert ".field-status-required { color: var(--red); }" in css
+
+
+def test_checkout_requires_first_last_email_and_phone(app):
+    client = app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "plain", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+
+    missing_name = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "first_name": "Alex",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+    assert missing_name.status_code == 200
+    assert b"Enter your first name, last name, and a valid email address." in missing_name.data
+
+    missing_phone = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+        },
+    )
+    assert missing_phone.status_code == 200
+    assert b"Enter a valid 10-digit US phone number." in missing_phone.data
+
+
 def test_custom_tip_is_included_in_confirmed_total(app):
     client = app.test_client()
     token = csrf(client)
@@ -472,12 +534,14 @@ def test_custom_tip_is_included_in_confirmed_total(app):
         "/checkout",
         data={
             "csrf_token": token,
-            "name": "Alex",
+            "first_name": "Alex",
+            "last_name": "Customer",
             "email": "alex@example.com",
+            "phone": "5185550100",
             "tip_choice": "custom",
             "custom_tip": "4.25",
         },
     )
     assert response.status_code == 200
-    assert b"Thanks, Alex." in response.data
+    assert b"Thanks, Alex Customer." in response.data
     assert b"$32.33" in response.data

@@ -245,7 +245,7 @@ class SquareFixture:
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
-            assert pickup["recipient"]["display_name"]
+            assert pickup["recipient"]["display_name"] == "Alex Customer"
             assert pickup["recipient"]["email_address"] == "alex@example.com"
             assert pickup["recipient"]["phone_number"] == "+15185550100"
             assert set(body["checkout_options"]) == {
@@ -735,7 +735,8 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
         data={
             "csrf_token": token,
             "verification_total_cents": "3348",
-            "name": "Alex Customer",
+            "first_name": "Alex",
+            "last_name": "Customer",
             "email": "alex@example.com",
             "phone": "5185550100",
             "notes": "Allergy note",
@@ -793,7 +794,8 @@ def test_checkout_does_not_reread_capacity_after_customer_reviews_order(square_a
         data={
             "csrf_token": token,
             "verification_total_cents": "2808",
-            "name": "Alex Customer",
+            "first_name": "Alex",
+            "last_name": "Customer",
             "email": "alex@example.com",
             "phone": "5185550100",
         },
@@ -834,7 +836,8 @@ def start_gift_card_checkout(app, client) -> tuple[str, str]:
             "csrf_token": token,
             "verification_total_cents": "3348",
             "payment_method": "gift_card",
-            "name": "Alex Customer",
+            "first_name": "Alex",
+            "last_name": "Customer",
             "email": "alex@example.com",
             "phone": "5185550100",
             "notes": "Allergy note",
@@ -1046,7 +1049,8 @@ def test_abandoned_hosted_checkout_does_not_block_a_fresh_checkout_page():
         data={
             "csrf_token": token,
             "verification_total_cents": "3348",
-            "name": "Alex",
+            "first_name": "Alex",
+            "last_name": "Customer",
             "email": "alex@example.com",
             "phone": "518-555-0100",
         },
@@ -1218,7 +1222,8 @@ def test_signed_checkout_session_survives_an_app_restart():
         data={
             "csrf_token": token,
             "verification_total_cents": "3348",
-            "name": "Alex Customer",
+            "first_name": "Alex",
+            "last_name": "Customer",
             "email": "alex@example.com",
             "phone": "5185550100",
         },
