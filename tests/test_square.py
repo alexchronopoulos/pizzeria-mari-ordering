@@ -314,6 +314,7 @@ class GiftCardFixture(SquareFixture):
         self.payments: dict[str, dict] = {}
         self.payment_bodies: list[dict] = []
         self.pay_order_body: dict | None = None
+        self.update_order_body: dict | None = None
         self.canceled_payment_ids: list[str] = []
         self.pay_order_failures = 0
 
@@ -325,6 +326,7 @@ class GiftCardFixture(SquareFixture):
             order = body["order"]
             uuid.UUID(body["idempotency_key"])
             assert order["reference_id"].startswith("PMGC-")
+            assert order["state"] == "DRAFT"
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
@@ -332,11 +334,25 @@ class GiftCardFixture(SquareFixture):
                 **order,
                 "id": "GIFT_ORDER_12345678",
                 "version": 1,
-                "state": "OPEN",
+                "state": "DRAFT",
                 "created_at": "2026-08-04T16:00:00Z",
                 "total_money": {"amount": 3348, "currency": "USD"},
                 "tenders": [],
             }
+            return httpx.Response(200, json={"order": self.created_order})
+        if request.method == "PUT" and path == "/v2/orders/GIFT_ORDER_12345678":
+            self.requests.append(request)
+            assert self.created_order is not None
+            body = json.loads(request.read())
+            uuid.UUID(body["idempotency_key"])
+            assert body["order"] == {
+                "id": "GIFT_ORDER_12345678",
+                "version": self.created_order["version"],
+                "state": "OPEN",
+            }
+            self.update_order_body = body
+            self.created_order["state"] = "OPEN"
+            self.created_order["version"] += 1
             return httpx.Response(200, json={"order": self.created_order})
         if request.method == "GET" and path == "/v2/orders/GIFT_ORDER_12345678":
             self.requests.append(request)
@@ -414,11 +430,6 @@ class GiftCardFixture(SquareFixture):
             return httpx.Response(
                 200, json={"payment": self.payments[payment_id]}
             )
-        if request.method == "PUT" and path == "/v2/orders/GIFT_ORDER_12345678":
-            self.requests.append(request)
-            self.canceled = True
-            self.created_order["state"] = "CANCELED"
-            return httpx.Response(200, json={"order": self.created_order})
         return super().__call__(request)
 
 
@@ -762,7 +773,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.8" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.9" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript
@@ -926,6 +937,18 @@ def test_gift_card_checkout_loads_square_fields_with_restricted_csp():
     assert "frame-src 'self' https://sandbox.web.squarecdn.com" in csp
 
 
+def test_abandoned_gift_card_checkout_remains_a_draft_order():
+    app = gift_card_app(gift_amount=3348)
+    client = app.test_client()
+
+    start_gift_card_checkout(app, client)
+
+    fixture = app.square_fixture
+    assert fixture.created_order["state"] == "DRAFT"
+    assert fixture.update_order_body is None
+    assert fixture.payment_bodies == []
+
+
 def test_gift_card_can_pay_the_full_order_and_show_a_receipt():
     app = gift_card_app(gift_amount=3348)
     client = app.test_client()
@@ -945,6 +968,13 @@ def test_gift_card_can_pay_the_full_order_and_show_a_receipt():
     assert paid.get_json()["status"] == "COMPLETED"
     assert "gift-token" not in paid.get_data(as_text=True)
     fixture = app.square_fixture
+    assert fixture.update_order_body["order"]["state"] == "OPEN"
+    request_calls = [
+        (request.method, request.url.path) for request in fixture.requests
+    ]
+    assert request_calls.index(
+        ("PUT", "/v2/orders/GIFT_ORDER_12345678")
+    ) < request_calls.index(("POST", "/v2/payments"))
     assert fixture.payment_bodies[0]["accept_partial_authorization"] is True
     assert fixture.payment_bodies[0]["amount_money"]["amount"] == 3348
     assert fixture.pay_order_body["payment_ids"] == ["GIFT_PAYMENT"]

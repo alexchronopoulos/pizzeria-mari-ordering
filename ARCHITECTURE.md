@@ -32,8 +32,8 @@ Square requires an idempotency key on the create call. The app generates a fresh
 ## Gift-card checkout
 
 1. Flask creates one scheduled Square order.
-2. Square's Web Payments SDK tokenizes the gift card directly in the browser.
-3. Flask authorizes the gift card with partial authorization enabled.
+2. Square's Web Payments SDK tokenizes the gift card directly in the browser while the order remains `DRAFT`.
+3. After receiving the token, Flask changes the same order to `OPEN` and authorizes the gift card with partial authorization enabled.
 4. If a balance remains, Square's embedded card field tokenizes a credit or debit card for exactly that remainder.
 5. Flask calls `PayOrder` once with the approved payment IDs so Square captures the tenders together and completes one order.
 

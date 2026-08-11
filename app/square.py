@@ -157,6 +157,13 @@ class SquareClient:
             json_body=request_body,
         )
 
+    def update_order(self, order_id: str, request_body: dict) -> dict:
+        return self.request(
+            "PUT",
+            f"/v2/orders/{order_id}",
+            json_body=request_body,
+        )
+
     def create_payment(self, request_body: dict) -> dict:
         return self.request(
             "POST",
@@ -838,17 +845,22 @@ class SquareCommerce:
         reference = (
             f"{GIFT_CARD_REFERENCE_PREFIX}{attempt_id.replace('-', '')}"[:40]
         )
+        order = self.order_payload(
+            lines=lines,
+            items_by_id=items_by_id,
+            service_at=service_at,
+            customer=customer,
+            notes=notes,
+            reference_id=reference,
+        )
+        # Customers can abandon the embedded gift-card screen after choosing
+        # it on checkout. Keep those attempts out of fulfillment workflows
+        # until the browser has produced a real Square payment token.
+        order["state"] = "DRAFT"
         payload = self.client.create_order(
             {
                 "idempotency_key": str(uuid.uuid4()),
-                "order": self.order_payload(
-                    lines=lines,
-                    items_by_id=items_by_id,
-                    service_at=service_at,
-                    customer=customer,
-                    notes=notes,
-                    reference_id=reference,
-                ),
+                "order": order,
             }
         )
         order = payload.get("order")
@@ -974,6 +986,36 @@ class SquareCommerce:
             raise SquareAPIError("A gift card has already been applied to this order.")
         if payment_method == "card" and not state["gift_card_applied"]:
             raise SquareAPIError("Apply a Square gift card before paying the remainder by card.")
+
+        if order.get("state") == "DRAFT":
+            version = order.get("version")
+            if not isinstance(version, int):
+                raise SquareAPIError(
+                    "Square did not return a valid gift-card order version. Please try again."
+                )
+            opened_payload = self.client.update_order(
+                order_id,
+                {
+                    "idempotency_key": str(uuid.uuid4()),
+                    "order": {
+                        "id": order_id,
+                        "version": version,
+                        "state": "OPEN",
+                    },
+                },
+            )
+            opened_order = opened_payload.get("order")
+            if not opened_order or opened_order.get("state") != "OPEN":
+                raise SquareAPIError(
+                    "Square did not open the gift-card order for payment. Please try again."
+                )
+            order = opened_order
+            state = {**state, "order": order}
+        elif order.get("state") != "OPEN":
+            raise SquareAPIError(
+                "That gift-card checkout is not available for payment."
+            )
+
         request_body = {
             "source_id": source_id,
             "idempotency_key": str(uuid.uuid4()),
