@@ -773,7 +773,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.9" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.10" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript
@@ -1257,6 +1257,16 @@ def test_unpaid_hosted_checkout_drafts_do_not_consume_capacity():
     assert payload["slots"][0]["remaining"] == 3
     assert payload["slots"][0]["status"] == "3 pizzas available"
     assert fixture.canceled is False
+    search_request = next(
+        request
+        for request in fixture.requests
+        if request.url.path == "/v2/orders/search"
+    )
+    search_body = json.loads(search_request.read())
+    assert search_body["query"]["filter"]["state_filter"]["states"] == [
+        "OPEN",
+        "COMPLETED",
+    ]
 
 
 def test_square_network_errors_do_not_expose_access_token(square_app):

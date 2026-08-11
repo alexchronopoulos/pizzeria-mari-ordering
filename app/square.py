@@ -197,7 +197,7 @@ class SquareClient:
                 "query": {
                     "filter": {
                         "state_filter": {
-                            "states": ["DRAFT", "OPEN", "COMPLETED"]
+                            "states": ["OPEN", "COMPLETED"]
                         },
                         "date_time_filter": {
                             "created_at": {
