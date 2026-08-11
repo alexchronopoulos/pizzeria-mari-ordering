@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.2 capabilities
+## Current v0.18.3 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -95,7 +95,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 
 The default payment choice creates a one-use Square payment link. Square shows tipping and eligible coupon controls, collects payment, emails its receipt, and redirects the buyer to this app for verified confirmation.
 
-When `SQUARE_APPLICATION_ID` is set, checkout also offers **Pay with a Square Gift Card**. That path creates one scheduled Square order, tokenizes the gift card directly with Square, accepts a partial authorization when needed, and collects the remainder through Square's embedded card field. `PayOrder` then captures all approved payments together, so Square Dashboard shows one order with both tenders.
+When `SQUARE_APPLICATION_ID` is set, checkout also offers **Pay with a Gift Card**. That path creates one scheduled Square order, tokenizes the gift card directly with Square, accepts a partial authorization when needed, and collects the remainder through Square's embedded card field. `PayOrder` then captures all approved payments together, so Square Dashboard shows one order with both tenders.
 
 Gift-card checkout intentionally does not offer online tipping or Marketing coupons. Payments API orders provide a Square receipt link on the confirmation page, but Square does not automatically email that receipt. Customers who want tips, coupons, digital wallets, or Square's emailed receipt can use the default hosted option.
 

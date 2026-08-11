@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.2" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.3" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.2" in response.data
-    assert b"/static/app.js?v=0.18.2" in response.data
+    assert b"/static/style.css?v=0.18.3" in response.data
+    assert b"/static/app.js?v=0.18.3" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.2",
+        "version": "0.18.3",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"

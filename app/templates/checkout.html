@@ -90,16 +90,14 @@
             <label class="payment-choice">
               <input type="radio" name="payment_method" value="hosted" {% if payment_method != 'gift_card' %}checked{% endif %}>
               <span>
-                <strong>Secure checkout on Square</strong>
-                <small>Pay by card or an available digital wallet. Choose a tip, apply an eligible Square coupon, and receive Square's emailed receipt.</small>
+                <strong>Secure Checkout on Square</strong>
               </span>
             </label>
             {% if gift_cards_enabled %}
               <label class="payment-choice">
                 <input type="radio" name="payment_method" value="gift_card" {% if payment_method == 'gift_card' %}checked{% endif %}>
                 <span>
-                  <strong>Pay with a Square Gift Card</strong>
-                  <small>Apply one Pizzeria Mari Square gift card, then pay any remaining balance by card. Online tips, coupons, and automatic receipt emails are not available in this flow.</small>
+                  <strong>Pay with a Gift Card</strong>
                 </span>
               </label>
             {% endif %}

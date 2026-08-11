@@ -21,7 +21,7 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.2"
+APP_VERSION = "0.18.3"
 
 
 def _csv_setting(

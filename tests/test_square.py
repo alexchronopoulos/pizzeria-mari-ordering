@@ -723,7 +723,8 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
 
     checkout = client.get("/checkout")
     assert checkout.status_code == 200
-    assert b"Secure checkout on Square" in checkout.data
+    assert b"Secure Checkout on Square" in checkout.data
+    assert b"Pay by card or an available digital wallet" not in checkout.data
     assert b'id="card-container"' not in checkout.data
     assert b"squarecdn.com/v1/square.js" not in checkout.data
     csp = checkout.headers["Content-Security-Policy"]
@@ -827,7 +828,9 @@ def start_gift_card_checkout(app, client) -> tuple[str, str]:
     assert added.status_code == 201
 
     checkout = client.get("/checkout")
-    assert b"Pay with a Square Gift Card" in checkout.data
+    assert b"Pay with a Gift Card" in checkout.data
+    assert b"Pay with a Square Gift Card" not in checkout.data
+    assert b"Apply one Pizzeria Mari Square gift card" not in checkout.data
     assert b'name="payment_method" value="hosted" checked' in checkout.data
     assert b"sandbox.web.squarecdn.com/v1/square.js" not in checkout.data
     started = client.post(
