@@ -66,15 +66,9 @@
     if (data.demoMode) return;
     data.paymentMethod = selectedPaymentMethod();
     const giftCard = data.paymentMethod === 'gift_card';
-    document.querySelector('#live-tip-summary').textContent = giftCard
-      ? 'Not available online'
-      : 'Choose on Square';
-    document.querySelector('#grand-total-label').textContent = giftCard
-      ? 'Total'
-      : 'Total before tip';
     checkoutButton.textContent = giftCard
       ? `Continue to gift card · ${money(data.orderTotalCents)}`
-      : `Continue to Square · ${money(data.orderTotalCents)} before tip`;
+      : `Continue to Square · ${money(data.orderTotalCents)}`;
   };
 
   const escapeHtml = (value) => String(value)

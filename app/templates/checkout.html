@@ -111,7 +111,7 @@
         {% elif payment_method == 'gift_card' %}
           Continue to gift card · <span id="submit-total">{{ checkout.total }}</span>
         {% else %}
-          Continue to Square · <span id="submit-total">{{ checkout.total }}</span> before tip
+          Continue to Square · <span id="submit-total">{{ checkout.total }}</span>
         {% endif %}
       </button>
     </form>
@@ -145,10 +145,8 @@
         <div><span>{{ checkout.tax_label }}</span><strong id="summary-tax">{{ checkout.tax }}</strong></div>
         {% if demo_mode %}
           <div><span>Tip <small id="tip-label">({{ checkout.tip_label }})</small></span><strong id="tip-total">{{ checkout.tip }}</strong></div>
-        {% else %}
-          <div><span>Tip</span><strong id="live-tip-summary">Choose on Square</strong></div>
         {% endif %}
-        <div class="summary-grand-total"><span id="grand-total-label">{% if demo_mode %}Total{% else %}Total before tip{% endif %}</span><strong id="grand-total">{{ checkout.total }}</strong></div>
+        <div class="summary-grand-total"><span id="grand-total-label">Total</span><strong id="grand-total">{{ checkout.total }}</strong></div>
       </div>
     </aside>
   </div>

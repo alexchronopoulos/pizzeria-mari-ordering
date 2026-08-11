@@ -724,9 +724,15 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     checkout = client.get("/checkout")
     assert checkout.status_code == 200
     assert b"Secure Checkout on Square" in checkout.data
+    assert b"before tip" not in checkout.data
+    assert b"Choose on Square" not in checkout.data
+    assert b"<span>Tip</span>" not in checkout.data
     assert b"Pay by card or an available digital wallet" not in checkout.data
     assert b'id="card-container"' not in checkout.data
     assert b"squarecdn.com/v1/square.js" not in checkout.data
+    checkout_javascript = client.get("/static/checkout.js").get_data(as_text=True)
+    assert "before tip" not in checkout_javascript
+    assert "Choose on Square" not in checkout_javascript
     csp = checkout.headers["Content-Security-Policy"]
     assert "squarecdn.com" not in csp
     assert "connect-src 'self'" in csp
