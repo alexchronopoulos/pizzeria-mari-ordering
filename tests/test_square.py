@@ -751,12 +751,21 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     )
 
     assert response.status_code == 303
-    assert response.headers["Location"] == "https://sandbox.square.link/u/test-checkout"
+    assert response.headers["Location"].startswith("/checkout/square?attempt=")
     with client.session_transaction() as browser_session:
         assert browser_session["cart"]
         pending = browser_session["pending_square_checkout"]
         assert pending["order_id"] == "SQUARE_ORDER_12345678"
         attempt_id = pending["attempt_id"]
+
+    handoff = client.get(response.headers["Location"])
+    assert handoff.status_code == 200
+    assert b"Opening Square" in handoff.data
+    assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.8" in handoff.data
+    assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
+    handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
+    assert "window.location.replace(link.href)" in handoff_javascript
 
     square_app.square_fixture.payment_status = "COMPLETED"
     complete = client.get(f"/checkout/complete?attempt={attempt_id}")
@@ -809,7 +818,7 @@ def test_checkout_does_not_reread_capacity_after_customer_reviews_order(square_a
     )
 
     assert response.status_code == 303
-    assert response.headers["Location"] == "https://sandbox.square.link/u/test-checkout"
+    assert response.headers["Location"].startswith("/checkout/square?attempt=")
 
 
 def test_hosted_checkout_accepts_a_remembered_e164_us_phone(square_app):
@@ -836,9 +845,13 @@ def test_hosted_checkout_accepts_a_remembered_e164_us_phone(square_app):
     )
 
     assert response.status_code == 303
-    assert response.headers["Location"] == "https://sandbox.square.link/u/test-checkout"
+    assert response.headers["Location"].startswith("/checkout/square?attempt=")
     with client.session_transaction() as browser_session:
         assert browser_session["pending_square_checkout"]["customer_phone"] == "+15185550100"
+
+    handoff = client.get(response.headers["Location"])
+    assert handoff.status_code == 200
+    assert b"https://sandbox.square.link/u/test-checkout" in handoff.data
 
 
 def start_gift_card_checkout(app, client) -> tuple[str, str]:

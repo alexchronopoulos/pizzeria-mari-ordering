@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Secure Checkout | Pizzeria Mari Order Online{% endblock %}
+
+{% block body %}
+<main class="confirmation-shell payment-pending-shell">
+  <span class="eyebrow">Secure checkout</span>
+  <h1>Opening Square…</h1>
+  <p class="confirmation-time">Your order is for pickup <strong>{{ selected.strftime('%A, %B %-d at %-I:%M %p') }}</strong>.</p>
+  <p>If Square does not open automatically, use the button below.</p>
+  <p><a class="button button-primary" id="square-checkout-link" href="{{ checkout_url }}">Continue to Square</a></p>
+</main>
+
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='square-redirect.js', v=asset_version) }}" defer></script>
+{% endblock %}

@@ -947,7 +947,13 @@ def checkout():
                         payment_mode=payment_method,
                         pickup_at=selected.isoformat(),
                     )
-                    return redirect(result["checkout_url"], code=303)
+                    return redirect(
+                        url_for(
+                            "storefront.hosted_checkout",
+                            attempt=attempt_id,
+                        ),
+                        code=303,
+                    )
             except (SlotUnavailableError, SquareAPIError) as exc:
                 log_event(
                     current_app.logger,
@@ -997,6 +1003,24 @@ def checkout():
             current_app.config.get("SQUARE_GIFT_CARDS_ENABLED")
         ),
         payment_method=payment_method,
+    )
+
+
+@storefront.get("/checkout/square")
+def hosted_checkout():
+    pending = session.get("pending_square_checkout")
+    attempt_id = request.args.get("attempt", "")
+    if (
+        not _pending_matches_attempt(pending, attempt_id)
+        or pending.get("mode") != "hosted"
+        or not pending.get("checkout_url")
+    ):
+        return redirect(url_for("storefront.checkout"))
+
+    return render_template(
+        "square_redirect.html",
+        checkout_url=pending["checkout_url"],
+        selected=datetime.fromisoformat(pending["service_at"]),
     )
 
 
