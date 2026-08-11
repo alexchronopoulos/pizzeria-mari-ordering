@@ -301,10 +301,14 @@
     if (event.target === pickupDialog) pickupDialog.close();
   });
 
-  checkoutForm?.addEventListener('submit', () => {
+  checkoutForm?.addEventListener('submit', (event) => {
+    if (checkoutForm.dataset.submitting === 'true') {
+      event.preventDefault();
+      return;
+    }
+    checkoutForm.dataset.submitting = 'true';
     saveRememberedContact();
     updateTip();
-    checkoutButton.disabled = true;
     checkoutButton.setAttribute('aria-busy', 'true');
     checkoutButton.textContent = data.demoMode
       ? 'Placing demo order…'

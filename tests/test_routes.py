@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.5" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.6" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.5" in response.data
-    assert b"/static/app.js?v=0.18.5" in response.data
+    assert b"/static/style.css?v=0.18.6" in response.data
+    assert b"/static/app.js?v=0.18.6" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.5",
+        "version": "0.18.6",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -510,6 +510,17 @@ def test_checkout_can_remember_contact_information_in_the_browser(app):
     assert "window.localStorage.removeItem" in javascript
     assert "restoreRememberedContact();" in javascript
     assert "saveRememberedContact();" in javascript
+
+
+def test_checkout_submit_does_not_disable_button_before_mobile_navigation(app):
+    javascript = app.test_client().get("/static/checkout.js").get_data(as_text=True)
+    submit_listener = javascript.split(
+        "checkoutForm?.addEventListener('submit'", 1
+    )[1].split("\n  });", 1)[0]
+
+    assert "event.preventDefault();" in submit_listener
+    assert "dataset.submitting" in submit_listener
+    assert "checkoutButton.disabled" not in submit_listener
 
 
 def test_checkout_requires_first_last_email_and_phone(app):
