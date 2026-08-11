@@ -7,9 +7,56 @@
   const customTipInput = document.querySelector('#custom-tip');
   const checkoutForm = document.querySelector('#checkout-form');
   const checkoutButton = document.querySelector('.checkout-submit');
+  const rememberContact = document.querySelector('#remember-contact');
+  const rememberedContactKey = 'pizzeriaMari.checkoutContact.v1';
+  const rememberedContactFields = ['first_name', 'last_name', 'email', 'phone'];
   const slotCache = new Map(Object.entries(data.slotsByDate || {}));
   const slotRequests = new Map();
   let displayedSlotDate = null;
+
+  const clearRememberedContact = () => {
+    try {
+      window.localStorage.removeItem(rememberedContactKey);
+    } catch (_error) {
+      // Checkout should remain usable when browser storage is unavailable.
+    }
+  };
+
+  const restoreRememberedContact = () => {
+    if (!rememberContact) return;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(rememberedContactKey));
+      if (!saved || typeof saved !== 'object') return;
+      let restored = false;
+      rememberedContactFields.forEach((name) => {
+        const input = checkoutForm?.elements.namedItem(name);
+        if (!input || input.value.trim() || typeof saved[name] !== 'string') return;
+        input.value = saved[name];
+        restored = true;
+      });
+      rememberContact.checked = restored || rememberedContactFields.some(
+        (name) => typeof saved[name] === 'string' && saved[name],
+      );
+    } catch (_error) {
+      clearRememberedContact();
+    }
+  };
+
+  const saveRememberedContact = () => {
+    if (!rememberContact?.checked) {
+      clearRememberedContact();
+      return;
+    }
+    const contact = Object.fromEntries(rememberedContactFields.map((name) => [
+      name,
+      checkoutForm.elements.namedItem(name)?.value.trim() || '',
+    ]));
+    try {
+      window.localStorage.setItem(rememberedContactKey, JSON.stringify(contact));
+    } catch (_error) {
+      // A privacy setting or storage limit should never block payment.
+    }
+  };
 
   const selectedPaymentMethod = () => (
     document.querySelector('input[name="payment_method"]:checked')?.value || 'hosted'
@@ -154,6 +201,9 @@
   document.querySelectorAll('input[name="payment_method"]').forEach((input) => {
     input.addEventListener('change', updatePaymentMethod);
   });
+  rememberContact?.addEventListener('change', () => {
+    if (!rememberContact.checked) clearRememberedContact();
+  });
 
   document.querySelector('#summary-lines')?.addEventListener('click', async (event) => {
     const removeButton = event.target.closest('[data-remove-line]');
@@ -258,6 +308,7 @@
   });
 
   checkoutForm?.addEventListener('submit', () => {
+    saveRememberedContact();
     updateTip();
     checkoutButton.disabled = true;
     checkoutButton.setAttribute('aria-busy', 'true');
@@ -268,5 +319,6 @@
         : 'Opening Square…');
   });
 
+  restoreRememberedContact();
   renderSummary(data.cart);
 })();

@@ -41,6 +41,13 @@
           <span class="field-label">Phone <span class="field-status field-status-required">Required</span></span>
           <input name="phone" type="tel" autocomplete="tel" value="{{ request.form.get('phone', '') }}" required>
         </label>
+        <label class="remember-contact" for="remember-contact">
+          <input id="remember-contact" type="checkbox">
+          <span>
+            <strong>Remember my contact information</strong>
+            <small>Saved only in this browser. Avoid on a shared device.</small>
+          </span>
+        </label>
       </fieldset>
 
       {% if demo_mode %}

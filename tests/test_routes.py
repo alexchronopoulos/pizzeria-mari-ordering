@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.1" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.2" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.1" in response.data
-    assert b"/static/app.js?v=0.18.1" in response.data
+    assert b"/static/style.css?v=0.18.2" in response.data
+    assert b"/static/app.js?v=0.18.2" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.1",
+        "version": "0.18.2",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -486,6 +486,30 @@ def test_checkout_field_statuses_share_inline_typography(app):
     assert ".field-label { display: flex; align-items: baseline;" in css
     assert ".field-status { color: #666;" in css
     assert ".field-status-required { color: var(--red); }" in css
+
+
+def test_checkout_can_remember_contact_information_in_the_browser(app):
+    client = app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "plain", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+
+    response = client.get("/checkout")
+    javascript = client.get("/static/checkout.js").get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert b'id="remember-contact" type="checkbox"' in response.data
+    assert b"Remember my contact information" in response.data
+    assert b"Saved only in this browser. Avoid on a shared device." in response.data
+    assert "pizzeriaMari.checkoutContact.v1" in javascript
+    assert "window.localStorage.setItem" in javascript
+    assert "window.localStorage.getItem" in javascript
+    assert "window.localStorage.removeItem" in javascript
+    assert "restoreRememberedContact();" in javascript
+    assert "saveRememberedContact();" in javascript
 
 
 def test_checkout_requires_first_last_email_and_phone(app):

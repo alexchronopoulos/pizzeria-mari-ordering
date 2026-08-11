@@ -264,7 +264,11 @@ a { color: inherit; }
 .field-label { display: flex; align-items: baseline; gap: .35rem; }
 .field-status { color: #666; font: 400 .76rem/1 var(--font-display); }
 .field-status-required { color: var(--red); }
-.checkout-form input:not([type=radio]), .checkout-form textarea { width: 100%; padding: 12px; background: white; border: 2px solid var(--ink); border-radius: 0; }
+.checkout-form input:not([type=radio]):not([type=checkbox]), .checkout-form textarea { width: 100%; padding: 12px; background: white; border: 2px solid var(--ink); border-radius: 0; }
+.checkout-form .remember-contact { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; margin-top: 2px; cursor: pointer; }
+.remember-contact input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--green); }
+.remember-contact > span { display: grid; gap: 2px; }
+.remember-contact small { color: #666; font: 400 .76rem/1.25 var(--font-display); }
 .tip-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .tip-choice { position: relative; }
 .tip-choice input { position: absolute; opacity: 0; }

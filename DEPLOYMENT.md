@@ -62,7 +62,7 @@ Check health:
 curl --fail --show-error https://order.pizzeriamari.com/health
 ```
 
-It should report version `0.18.1` and `ordering_enabled: false`. The home page should show the Square fallback link.
+It should report version `0.18.2` and `ordering_enabled: false`. The home page should show the Square fallback link.
 
 Then run the Sandbox test matrix and these controlled Production transactions at the unadvertised URL:
 
