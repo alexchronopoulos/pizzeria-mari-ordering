@@ -196,7 +196,13 @@
     input.addEventListener('change', updatePaymentMethod);
   });
   rememberContact?.addEventListener('change', () => {
-    if (!rememberContact.checked) clearRememberedContact();
+    if (rememberContact.checked) saveRememberedContact();
+    else clearRememberedContact();
+  });
+  rememberedContactFields.forEach((name) => {
+    checkoutForm?.elements.namedItem(name)?.addEventListener('input', () => {
+      if (rememberContact?.checked) saveRememberedContact();
+    });
   });
 
   document.querySelector('#summary-lines')?.addEventListener('click', async (event) => {
@@ -299,22 +305,6 @@
   });
   pickupDialog?.addEventListener('click', (event) => {
     if (event.target === pickupDialog) pickupDialog.close();
-  });
-
-  checkoutForm?.addEventListener('submit', (event) => {
-    if (checkoutForm.dataset.submitting === 'true') {
-      event.preventDefault();
-      return;
-    }
-    checkoutForm.dataset.submitting = 'true';
-    saveRememberedContact();
-    updateTip();
-    checkoutButton.setAttribute('aria-busy', 'true');
-    checkoutButton.textContent = data.demoMode
-      ? 'Placing demo order…'
-      : (selectedPaymentMethod() === 'gift_card'
-        ? 'Preparing gift-card payment…'
-        : 'Opening Square…');
   });
 
   restoreRememberedContact();

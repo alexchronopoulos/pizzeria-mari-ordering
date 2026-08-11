@@ -812,6 +812,35 @@ def test_checkout_does_not_reread_capacity_after_customer_reviews_order(square_a
     assert response.headers["Location"] == "https://sandbox.square.link/u/test-checkout"
 
 
+def test_hosted_checkout_accepts_a_remembered_e164_us_phone(square_app):
+    client = square_app.test_client()
+    token = csrf(client)
+    added = client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    assert added.status_code == 201
+
+    response = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "verification_total_cents": "2808",
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "+15185550100",
+            "payment_method": "hosted",
+        },
+    )
+
+    assert response.status_code == 303
+    assert response.headers["Location"] == "https://sandbox.square.link/u/test-checkout"
+    with client.session_transaction() as browser_session:
+        assert browser_session["pending_square_checkout"]["customer_phone"] == "+15185550100"
+
+
 def start_gift_card_checkout(app, client) -> tuple[str, str]:
     token = csrf(client)
     addition_id = (

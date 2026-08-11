@@ -56,13 +56,13 @@ def _percentage_cents(cents: int, percent: int) -> int:
 
 def _normalize_phone(value: str) -> str:
     if not value.strip():
-        raise ValueError("Enter a valid 10-digit US phone number.")
+        raise ValueError("Enter a valid US phone number (10 digits or +1).")
     digits = re.sub(r"\D", "", value)
     if len(digits) == 10:
         return f"+1{digits}"
     if len(digits) == 11 and digits.startswith("1"):
         return f"+{digits}"
-    raise ValueError("Enter a valid 10-digit US phone number.")
+    raise ValueError("Enter a valid US phone number (10 digits or +1).")
 
 
 def _checkout_return_url(attempt_id: str) -> str:
