@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.3 capabilities
+## Current v0.18.14 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -15,7 +15,8 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Quantity controls on the menu and checkout, with preventative limit feedback.
 - Checkout collects required first name, last name, email, and phone fields with optional order notes.
 - Buyers can opt to remember those four contact fields in their current browser for faster future checkout; the data is never stored by the server.
-- Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
+- Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, low-stock alerts, and modifier lists.
+- Location-specific Square inventory counts for tracked items. Low-stock items show their remaining quantity, and the server prevents carts from exceeding it.
 - Large square menu photography with a pizza-centered focal crop and no image border; the complete item card has a border. Item details show a larger uncropped image above the item name.
 - One compact Additions picker whose visible options come from Square's Whole Pie Additions list. Whole, first-half, and second-half choices resolve to the matching option and price in their respective Square lists.
 - Every other customer-facing modifier list attached to an item is rendered and validated automatically, including Square's inherited/unlimited selection rules.
@@ -95,7 +96,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 
 The default payment choice creates a one-use Square payment link. Square shows tipping and eligible coupon controls, collects payment, emails its receipt, and redirects the buyer to this app for verified confirmation.
 
-When `SQUARE_APPLICATION_ID` is set, checkout also offers **Pay with a Gift Card**. That path creates one scheduled Square order in `DRAFT`, tokenizes the gift card directly with Square, and changes the same order to `OPEN` only when the customer submits payment. It accepts a partial authorization when needed and collects the remainder through Square's embedded card field. `PayOrder` then captures all approved payments together, so Square Dashboard shows one order with both tenders. Customers who leave the gift-card screen without submitting payment leave only a draft order.
+When `SQUARE_APPLICATION_ID` is set, checkout also offers **Pay with a Gift Card**. That path creates one scheduled Square order, tokenizes the gift card directly with Square, accepts a partial authorization when needed, and collects the remainder through Square's embedded card field. `PayOrder` then captures all approved payments together, so Square Dashboard shows one order with both tenders.
 
 Gift-card checkout intentionally does not offer online tipping or Marketing coupons. Payments API orders provide a Square receipt link on the confirmation page, but Square does not automatically email that receipt. Customers who want tips, coupons, digital wallets, or Square's emailed receipt can use the default hosted option.
 
@@ -118,7 +119,7 @@ All items in `SQUARE_PIZZA_CATEGORY_NAMES` consume pizza cart and pickup-slot ca
 
 `SQUARE_EXCLUDED_MODIFIER_LIST_NAMES` contains exact Square modifier-list names that should not appear inside an item's customization dialog. This does not delete or copy those lists; the catalog remains in Square.
 
-Catalog results are held in process memory for 30 seconds by default to keep page loads fast. They are never written to disk:
+Catalog and tracked-inventory results are held together in process memory for 30 seconds by default to keep page loads fast. They are never written to disk:
 
 ```dotenv
 SQUARE_CATALOG_CACHE_SECONDS=30

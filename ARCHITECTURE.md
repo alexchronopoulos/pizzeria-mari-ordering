@@ -6,6 +6,10 @@ Square owns the catalog, prices, taxes, discounts, customers, scheduled pickup o
 
 Flask owns only the storefront presentation and Pizzeria Mari's simple cart and pickup rules. Its signed browser cookie holds the cart, selected pickup time, and the Square order identifier needed to display the result after payment. It never contains a gift-card number, card number, or Square payment token.
 
+## Menu inventory
+
+Each menu refresh joins Square's catalog with the location's current `IN_STOCK` counts for variations that have inventory tracking enabled. The catalog's location-specific low-quantity threshold controls the customer-facing low-stock label, and the current count caps the quantity accepted by both the browser and Flask. Catalog and inventory data share the same 30-second in-process cache; untracked items retain the normal cart and pickup-capacity limits.
+
 ## Pickup availability
 
 The optional `PICKUP_SCHEDULE` configuration replaces selected weekday or
@@ -32,8 +36,8 @@ Square requires an idempotency key on the create call. The app generates a fresh
 ## Gift-card checkout
 
 1. Flask creates one scheduled Square order.
-2. Square's Web Payments SDK tokenizes the gift card directly in the browser while the order remains `DRAFT`.
-3. After receiving the token, Flask changes the same order to `OPEN` and authorizes the gift card with partial authorization enabled.
+2. Square's Web Payments SDK tokenizes the gift card directly in the browser.
+3. Flask authorizes the gift card with partial authorization enabled.
 4. If a balance remains, Square's embedded card field tokenizes a credit or debit card for exactly that remainder.
 5. Flask calls `PayOrder` once with the approved payment IDs so Square captures the tenders together and completes one order.
 

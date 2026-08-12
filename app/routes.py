@@ -458,6 +458,7 @@ def _cart_payload(lines: list[dict], items_by_id: dict[str, MenuItem]) -> dict:
                 **line,
                 "name": item.name,
                 "capacity_category": item.capacity_category,
+                "stock_quantity": item.stock_quantity,
                 "modifiers": [
                     modifier.get("display", modifier.get("name", ""))
                     if isinstance(modifier, dict)
@@ -796,6 +797,17 @@ def checkout():
         return redirect(url_for("storefront.index"))
     menu = _menu(allow_stale=request.method == "POST")
     items_by_id = menu.items_by_id
+    try:
+        validate_cart(
+            lines,
+            items_by_id,
+            current_app.config["CART_TOTAL_LIMIT"],
+            current_app.config["CATEGORY_LIMITS"],
+        )
+    except CartLimitError as exc:
+        cart_validation_error = str(exc)
+    else:
+        cart_validation_error = None
     availability_counts = (
         _pizza_counts(menu) if request.method == "GET" else None
     )
@@ -808,7 +820,7 @@ def checkout():
         return redirect(url_for("storefront.index"))
 
     pricing = _pricing(lines, items_by_id)
-    error = session.pop("checkout_error", None)
+    error = session.pop("checkout_error", None) or cart_validation_error
     selected_tip = request.form.get("tip_choice", "15")
     custom_tip_value = request.form.get("custom_tip", "")
     payment_method = request.form.get("payment_method", "hosted")

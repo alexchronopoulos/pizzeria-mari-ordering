@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.13" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.14" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.13" in response.data
-    assert b"/static/app.js?v=0.18.13" in response.data
+    assert b"/static/style.css?v=0.18.14" in response.data
+    assert b"/static/app.js?v=0.18.14" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -100,7 +100,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.13",
+        "version": "0.18.14",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -314,7 +314,8 @@ def test_cart_quantity_controls_and_three_pizza_button_message_are_present(app):
     assert b'data-cart-action="increase"' in checkout.data
     assert b'data-cart-action="decrease"' in checkout.data
     assert b"Add to order \xc2\xb7 ${data.pizzaLimit} pizza maximum" in javascript.data
-    assert b"quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit" in javascript.data
+    assert b"quantityUp.disabled = reachesStock || reachesPizzaLimit || reachesTotalLimit" in javascript.data
+    assert b"cartQuantityForItem(activeItem.id) + nextQuantity > activeItem.stock_quantity" in javascript.data
 
 
 def test_pickup_api_shows_remaining_pizzas_and_keeps_full_times_visible(app):

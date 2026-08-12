@@ -20,12 +20,23 @@ def validate_cart(
         raise CartLimitError(f"Your cart can contain at most {total_limit} total items.")
 
     category_counts: Counter[str] = Counter()
+    item_counts: Counter[str] = Counter()
     for line in lines:
         item = items_by_id.get(line["item_id"])
         if not item:
             raise CartLimitError("One of the items in your cart is no longer available.")
+        if not item.available:
+            raise CartLimitError(f"{item.name} is no longer available.")
+        item_counts[item.id] += int(line["quantity"])
         if item.capacity_category:
             category_counts[item.capacity_category] += int(line["quantity"])
+
+    for item_id, quantity in item_counts.items():
+        item = items_by_id[item_id]
+        if item.stock_quantity is not None and quantity > item.stock_quantity:
+            raise CartLimitError(
+                f"Only {item.stock_quantity} of {item.name} remain in stock."
+            )
 
     for category, limit in category_limits.items():
         if category_counts[category] > limit:

@@ -136,6 +136,35 @@ class SquareClient:
             if not cursor:
                 return objects
 
+    def batch_retrieve_inventory_counts(
+        self, *, catalog_object_ids: list[str], location_id: str
+    ) -> list[dict]:
+        if not catalog_object_ids:
+            return []
+        counts: list[dict] = []
+        for start in range(0, len(catalog_object_ids), 1000):
+            object_ids = catalog_object_ids[start : start + 1000]
+            cursor = None
+            while True:
+                body = {
+                    "catalog_object_ids": object_ids,
+                    "location_ids": [location_id],
+                    "states": ["IN_STOCK"],
+                    "limit": 1000,
+                }
+                if cursor:
+                    body["cursor"] = cursor
+                payload = self.request(
+                    "POST",
+                    "/v2/inventory/counts/batch-retrieve",
+                    json_body=body,
+                )
+                counts.extend(payload.get("counts", []))
+                cursor = payload.get("cursor")
+                if not cursor:
+                    break
+        return counts
+
     def calculate_order(self, order: dict) -> dict:
         payload = self.request(
             "POST", "/v2/orders/calculate", json_body={"order": order}
@@ -249,6 +278,26 @@ def _sold_out(data: dict, location_id: str) -> bool:
     return bool(_location_override(data, location_id).get("sold_out", False))
 
 
+def _tracks_inventory(data: dict, location_id: str) -> bool:
+    override = _location_override(data, location_id)
+    return bool(override.get("track_inventory", data.get("track_inventory", False)))
+
+
+def _inventory_alert(data: dict, location_id: str) -> tuple[str | None, int | None]:
+    override = _location_override(data, location_id)
+    alert_type = override.get("inventory_alert_type")
+    threshold = override.get("inventory_alert_threshold")
+    if alert_type is None:
+        alert_type = data.get("inventory_alert_type")
+    if threshold is None:
+        threshold = data.get("inventory_alert_threshold")
+    try:
+        parsed_threshold = int(threshold) if threshold is not None else None
+    except (TypeError, ValueError):
+        parsed_threshold = None
+    return alert_type, parsed_threshold
+
+
 def _category_ids(item_data: dict) -> list[str]:
     ids = [entry.get("id") for entry in item_data.get("categories", [])]
     if item_data.get("category_id"):
@@ -347,7 +396,13 @@ class SquareCatalogProvider:
             now = time.monotonic()
             if self._cached and now - self._cached_at < self.cache_seconds:
                 return self._cached
-            snapshot = self._build(self.client.list_catalog())
+            objects = self.client.list_catalog()
+            tracked_ids = self._tracked_variation_ids(objects)
+            inventory_counts = self.client.batch_retrieve_inventory_counts(
+                catalog_object_ids=tracked_ids,
+                location_id=self.location_id,
+            )
+            snapshot = self._build(objects, inventory_counts)
             self._cached = snapshot
             self._cached_at = now
             return snapshot
@@ -356,7 +411,49 @@ class SquareCatalogProvider:
         """Return the menu already shown to this process without a network read."""
         return self._cached
 
-    def _build(self, objects: list[dict]) -> MenuSnapshot:
+    def _tracked_variation_ids(self, objects: list[dict]) -> list[str]:
+        category_ids = {
+            obj["id"]
+            for obj in objects
+            if obj.get("type") == "CATEGORY"
+            and not obj.get("is_deleted", False)
+            and obj.get("category_data", {}).get("name")
+            in self.allowed_category_names
+        }
+        return [
+            variation["id"]
+            for item_object in objects
+            if item_object.get("type") == "ITEM"
+            and not item_object.get("is_deleted", False)
+            and any(
+                category_id in category_ids
+                for category_id in _category_ids(item_object.get("item_data", {}))
+            )
+            for variation in item_object.get("item_data", {}).get("variations", [])
+            if variation.get("id")
+            and not variation.get("is_deleted", False)
+            and _present_at_location(variation, self.location_id)
+            and _tracks_inventory(
+                variation.get("item_variation_data", {}), self.location_id
+            )
+        ]
+
+    def _build(
+        self, objects: list[dict], inventory_counts: list[dict] | None = None
+    ) -> MenuSnapshot:
+        stock_by_variation: dict[str, int] = {}
+        for count in inventory_counts or []:
+            if (
+                count.get("state") != "IN_STOCK"
+                or count.get("location_id") != self.location_id
+                or not count.get("catalog_object_id")
+            ):
+                continue
+            try:
+                quantity = int(Decimal(str(count.get("quantity", "0"))))
+            except (ArithmeticError, ValueError):
+                continue
+            stock_by_variation[count["catalog_object_id"]] = max(0, quantity)
         categories = {
             obj["id"]: obj
             for obj in objects
@@ -444,6 +541,20 @@ class SquareCatalogProvider:
                     (images.get(image_id) for image_id in item_data.get("image_ids", []) if images.get(image_id)),
                     None,
                 )
+                tracks_inventory = _tracks_inventory(
+                    variation_data, self.location_id
+                )
+                stock_quantity = (
+                    stock_by_variation.get(variation["id"])
+                    if tracks_inventory
+                    else None
+                )
+                alert_type, alert_threshold = _inventory_alert(
+                    variation_data, self.location_id
+                )
+                sold_out = _sold_out(variation_data, self.location_id)
+                if stock_quantity == 0:
+                    sold_out = True
                 grouped[category_id].append(
                     MenuItem(
                         id=variation["id"],
@@ -459,7 +570,15 @@ class SquareCatalogProvider:
                         or "",
                         additions=additions,
                         modifier_groups=modifier_groups,
-                        available=not _sold_out(variation_data, self.location_id),
+                        available=not sold_out,
+                        stock_quantity=stock_quantity,
+                        low_stock=bool(
+                            not sold_out
+                            and alert_type == "LOW_QUANTITY"
+                            and alert_threshold is not None
+                            and stock_quantity is not None
+                            and stock_quantity <= alert_threshold
+                        ),
                         image_url=image_url,
                         catalog_object_id=variation["id"],
                         catalog_version=variation.get("version"),

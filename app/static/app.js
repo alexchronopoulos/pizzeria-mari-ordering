@@ -24,6 +24,10 @@
     element.style.backgroundImage = url ? `url(${JSON.stringify(url)})` : '';
   };
 
+  const cartQuantityForItem = (itemId) => data.cart.lines
+    .filter((line) => line.item_id === itemId)
+    .reduce((total, line) => total + line.quantity, 0);
+
   document.querySelectorAll('.menu-photo[data-image-url]').forEach((photo) => {
     setBackgroundImage(photo, photo.dataset.imageUrl);
   });
@@ -57,10 +61,16 @@
       const increaseHitsPizzaLimit = line.capacity_category === 'pizza'
         && cart.totals.pizza_count >= data.pizzaLimit;
       const increaseHitsTotalLimit = cart.totals.item_count >= data.totalLimit;
-      const increaseDisabled = increaseHitsPizzaLimit || increaseHitsTotalLimit;
-      const increaseTitle = increaseHitsPizzaLimit
+      const increaseHitsStock = Number.isInteger(line.stock_quantity)
+        && cart.lines
+          .filter((candidate) => candidate.item_id === line.item_id)
+          .reduce((total, candidate) => total + candidate.quantity, 0) >= line.stock_quantity;
+      const increaseDisabled = increaseHitsStock || increaseHitsPizzaLimit || increaseHitsTotalLimit;
+      const increaseTitle = increaseHitsStock
+        ? `Only ${line.stock_quantity} available`
+        : (increaseHitsPizzaLimit
         ? `${data.pizzaLimit} pizza maximum reached`
-        : (increaseHitsTotalLimit ? `${data.totalLimit} item maximum reached` : '');
+        : (increaseHitsTotalLimit ? `${data.totalLimit} item maximum reached` : ''));
       return `
       <div class="cart-line" data-cart-line="${escapeHtml(line.id)}">
         <strong>${escapeHtml(line.name)}</strong>
@@ -149,6 +159,11 @@
     const quantityUp = document.querySelector('#quantity-up');
     const pizzaCount = data.cart.totals.pizza_count;
     const itemCount = data.cart.totals.item_count;
+    const stockRemaining = Number.isInteger(activeItem.stock_quantity)
+      ? Math.max(0, activeItem.stock_quantity - cartQuantityForItem(activeItem.id))
+      : null;
+    const exceedsStock = stockRemaining !== null && quantity > stockRemaining;
+    const reachesStock = stockRemaining !== null && quantity >= stockRemaining;
     const reachesPizzaLimit = activeItem.capacity_category === 'pizza'
       && pizzaCount + quantity >= data.pizzaLimit;
     const reachesTotalLimit = itemCount + quantity >= data.totalLimit;
@@ -157,12 +172,21 @@
     button.classList.remove('button-limit');
     price.hidden = false;
     label.textContent = 'Add to order';
-    quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit;
-    quantityUp.title = reachesPizzaLimit
+    quantityUp.disabled = reachesStock || reachesPizzaLimit || reachesTotalLimit;
+    quantityUp.title = reachesStock
+      ? `Only ${activeItem.stock_quantity} available`
+      : (reachesPizzaLimit
       ? `${data.pizzaLimit} pizza maximum`
-      : (reachesTotalLimit ? `${data.totalLimit} item maximum` : '');
+      : (reachesTotalLimit ? `${data.totalLimit} item maximum` : ''));
 
-    if (activeItem.capacity_category === 'pizza' && pizzaCount >= data.pizzaLimit) {
+    if (exceedsStock) {
+      label.textContent = stockRemaining === 0
+        ? 'Square stock limit already in cart'
+        : `Only ${stockRemaining} more available`;
+      price.hidden = true;
+      button.disabled = true;
+      button.classList.add('button-limit');
+    } else if (activeItem.capacity_category === 'pizza' && pizzaCount >= data.pizzaLimit) {
       label.textContent = `${data.pizzaLimit} pizza maximum reached`;
       price.hidden = true;
       button.disabled = true;
@@ -214,6 +238,11 @@
       document.querySelector('#item-category').textContent = activeItem.category_label;
       document.querySelector('#item-name').textContent = activeItem.name;
       document.querySelector('#item-description').textContent = activeItem.description;
+      const stockMessage = document.querySelector('#item-stock');
+      stockMessage.textContent = activeItem.low_stock
+        ? `Low stock · ${activeItem.stock_quantity} left`
+        : '';
+      stockMessage.hidden = !activeItem.low_stock;
       const itemArt = document.querySelector('#item-art');
       itemArt.className = activeItem.image_url
         ? 'pizza-art item-photo'
@@ -271,6 +300,12 @@
       return;
     }
     if (data.cart.totals.item_count + nextQuantity > data.totalLimit) {
+      return;
+    }
+    if (
+      Number.isInteger(activeItem.stock_quantity)
+      && cartQuantityForItem(activeItem.id) + nextQuantity > activeItem.stock_quantity
+    ) {
       return;
     }
     quantity = nextQuantity;
