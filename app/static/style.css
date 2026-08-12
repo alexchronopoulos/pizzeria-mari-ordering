@@ -39,6 +39,10 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
   color: var(--ink);
   background: var(--cream);
@@ -71,6 +75,14 @@ a { color: inherit; }
 .header-meta { display: flex; align-items: center; gap: 22px; font-size: .9rem; }
 .header-meta > span { font: 500 1.08rem/1 var(--font-display); }
 .header-meta a { padding: 8px 12px; color: var(--ink); background: var(--yellow); border: 2px solid var(--ink); text-decoration: none; font-weight: 700; }
+
+.site-footer { display: flex; justify-content: center; margin-top: auto; padding: 20px 24px; color: var(--paper); background: var(--blue); border-top: 3px solid var(--ink); }
+.footer-links { display: flex; align-items: center; gap: 14px; }
+.footer-link { display: grid; width: 48px; height: 48px; color: inherit; border: 2px solid currentColor; place-items: center; transition: box-shadow .12s ease, transform .12s ease; }
+.footer-link svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.footer-link .icon-fill { fill: currentColor; stroke: none; }
+.footer-link:hover { color: var(--ink); background: var(--yellow); border-color: var(--ink); box-shadow: 3px 3px 0 var(--ink); transform: translate(-1px, -1px); }
+.footer-link:focus-visible { color: var(--ink); background: var(--yellow); outline: 3px solid var(--paper); outline-offset: 3px; }
 
 .store-shell { width: min(1180px, calc(100% - 32px)); margin: 26px auto 70px; }
 .pickup-banner {

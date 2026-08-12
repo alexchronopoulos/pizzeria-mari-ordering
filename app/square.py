@@ -196,9 +196,7 @@ class SquareClient:
                 "return_entries": False,
                 "query": {
                     "filter": {
-                        "state_filter": {
-                            "states": ["OPEN", "COMPLETED"]
-                        },
+                        "state_filter": {"states": ["OPEN", "COMPLETED"]},
                         "date_time_filter": {
                             "created_at": {
                                 "start_at": created_after.astimezone(timezone.utc)
@@ -718,12 +716,6 @@ class SquareCommerce:
                 order_lines.append(order_line)
         return order_lines
 
-    def _pickup_receipt_note(self, service_at: datetime) -> str:
-        local_pickup = service_at.astimezone(self.timezone)
-        date_text = local_pickup.strftime("%A, %B")
-        time_text = local_pickup.strftime("%I:%M %p").lstrip("0")
-        return f"Pickup: {date_text} {local_pickup.day} at {time_text}"
-
     def order_payload(
         self,
         *,
@@ -734,15 +726,16 @@ class SquareCommerce:
         notes: str = "",
         reference_id: str | None = None,
     ) -> dict:
-        order_lines = self._order_line_items(lines, items_by_id)
-        if service_at and order_lines:
-            # Square's receipt template does not render scheduled fulfillment
-            # times, but it does render line-item notes. Add the pickup time to
-            # one item so it appears once on the hosted checkout and receipt.
-            order_lines[0]["note"] = self._pickup_receipt_note(service_at)
+        line_items = self._order_line_items(lines, items_by_id)
+        if service_at and line_items:
+            date_text = service_at.strftime("%A, %B")
+            time_text = service_at.strftime("%I:%M %p").lstrip("0")
+            line_items[0]["note"] = (
+                f"Pickup: {date_text} {service_at.day} at {time_text}"
+            )
         order = {
             "location_id": self.location_id,
-            "line_items": order_lines,
+            "line_items": line_items,
             "pricing_options": {
                 "auto_apply_taxes": True,
                 "auto_apply_discounts": True,
@@ -996,23 +989,31 @@ class SquareCommerce:
         if payment_method == "card" and not state["gift_card_applied"]:
             raise SquareAPIError("Apply a Square gift card before paying the remainder by card.")
         if order.get("state") == "DRAFT":
+            version = order.get("version")
+            if not isinstance(version, int):
+                raise SquareAPIError(
+                    "Square did not return a valid gift-card order. Please try again."
+                )
             opened_payload = self.client.update_order(
                 order_id,
                 {
                     "idempotency_key": str(uuid.uuid4()),
                     "order": {
-                        "version": order["version"],
+                        # Square validates the location as part of the complete
+                        # versioned Order object used for this state change.
+                        "location_id": self.location_id,
+                        "version": version,
                         "state": "OPEN",
-                    }
+                    },
                 },
             )
             opened_order = opened_payload.get("order")
             if not opened_order or opened_order.get("state") != "OPEN":
                 raise SquareAPIError(
-                    "Square could not open that gift-card order. Please try again."
+                    "Square could not open the gift-card order. Please try again."
                 )
+            state = {**state, "order": opened_order}
             order = opened_order
-            state = {**state, "order": order}
         request_body = {
             "source_id": source_id,
             "idempotency_key": str(uuid.uuid4()),

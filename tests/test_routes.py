@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.11" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.13" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,13 +57,32 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.11" in response.data
-    assert b"/static/app.js?v=0.18.11" in response.data
+    assert b"/static/style.css?v=0.18.13" in response.data
+    assert b"/static/app.js?v=0.18.13" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
     assert favicon.mimetype == "image/png"
     assert favicon.data.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_site_footer_has_accessible_icon_links(app):
+    response = app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert b'class="site-footer"' in response.data
+    assert b'aria-label="Pizzeria Mari links"' in response.data
+    assert b'href="https://www.instagram.com/pizzeria_mari/"' in response.data
+    assert b'aria-label="Pizzeria Mari on Instagram"' in response.data
+    assert b'href="mailto:hello@pizzeriamari.com"' in response.data
+    assert b'aria-label="Email Pizzeria Mari"' in response.data
+    assert b'href="https://pizzeriamari.com/"' in response.data
+    assert b'aria-label="Visit the Pizzeria Mari website"' in response.data
+    assert response.data.count(b'class="footer-link"') == 3
+
+    css = app.test_client().get("/static/style.css").get_data(as_text=True)
+    assert ".site-footer" in css
+    assert ".footer-link:focus-visible" in css
 
 
 def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
@@ -81,7 +100,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.11",
+        "version": "0.18.13",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"

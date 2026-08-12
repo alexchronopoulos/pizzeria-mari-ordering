@@ -214,11 +214,6 @@ class SquareFixture:
         if request.method == "GET" and request.url.path == "/v2/catalog/list":
             return httpx.Response(200, json={"objects": catalog_objects()})
         if request.url.path == "/v2/orders/search":
-            body = json.loads(request.read())
-            assert body["query"]["filter"]["state_filter"]["states"] == [
-                "OPEN",
-                "COMPLETED",
-            ]
             orders = list(self.orders)
             if self.created_order:
                 orders.append(self.created_order)
@@ -248,9 +243,6 @@ class SquareFixture:
             body = json.loads(request.read())
             order = body["order"]
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
-            assert order["line_items"][0]["note"] == (
-                "Pickup: Thursday, August 6 at 4:00 PM"
-            )
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
             assert pickup["recipient"]["display_name"] == "Alex Customer"
@@ -336,15 +328,13 @@ class GiftCardFixture(SquareFixture):
             assert order["reference_id"].startswith("PMGC-")
             assert order["state"] == "DRAFT"
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
-            assert order["line_items"][0]["note"] == (
-                "Pickup: Thursday, August 6 at 4:00 PM"
-            )
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
             self.created_order = {
                 **order,
                 "id": "GIFT_ORDER_12345678",
                 "version": 1,
+                "state": "DRAFT",
                 "created_at": "2026-08-04T16:00:00Z",
                 "total_money": {"amount": 3348, "currency": "USD"},
                 "tenders": [],
@@ -354,28 +344,12 @@ class GiftCardFixture(SquareFixture):
             self.requests.append(request)
             assert self.created_order is not None
             return httpx.Response(200, json={"order": self.created_order})
-        if request.method == "PUT" and path == "/v2/orders/GIFT_ORDER_12345678":
-            self.requests.append(request)
-            assert self.created_order is not None
-            body = json.loads(request.read())
-            self.order_update_bodies.append(body)
-            if body.get("order", {}).get("state") == "OPEN":
-                uuid.UUID(body["idempotency_key"])
-                assert body["order"] == {
-                    "version": self.created_order["version"],
-                    "state": "OPEN",
-                }
-                self.created_order["state"] = "OPEN"
-                self.created_order["version"] += 1
-                return httpx.Response(200, json={"order": self.created_order})
-            self.canceled = True
-            self.created_order["state"] = "CANCELED"
-            return httpx.Response(200, json={"order": self.created_order})
         if request.method == "POST" and path == "/v2/payments":
             self.requests.append(request)
             assert self.created_order is not None
             body = json.loads(request.read())
             self.payment_bodies.append(body)
+            assert self.created_order["state"] == "OPEN"
             assert body["autocomplete"] is False
             assert body["order_id"] == "GIFT_ORDER_12345678"
             assert body["location_id"] == "LOCATION"
@@ -443,6 +417,24 @@ class GiftCardFixture(SquareFixture):
             return httpx.Response(
                 200, json={"payment": self.payments[payment_id]}
             )
+        if request.method == "PUT" and path == "/v2/orders/GIFT_ORDER_12345678":
+            self.requests.append(request)
+            body = json.loads(request.read())
+            if body.get("order", {}).get("state") == "OPEN":
+                assert self.created_order["state"] == "DRAFT"
+                assert body["order"] == {
+                    "location_id": "LOCATION",
+                    "version": self.created_order["version"],
+                    "state": "OPEN",
+                }
+                uuid.UUID(body["idempotency_key"])
+                self.order_update_bodies.append(body)
+                self.created_order["state"] = "OPEN"
+                self.created_order["version"] += 1
+                return httpx.Response(200, json={"order": self.created_order})
+            self.canceled = True
+            self.created_order["state"] = "CANCELED"
+            return httpx.Response(200, json={"order": self.created_order})
         return super().__call__(request)
 
 
@@ -786,7 +778,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.11" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.13" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript
@@ -800,32 +792,6 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     with client.session_transaction() as browser_session:
         assert "cart" not in browser_session
         assert "pending_square_checkout" not in browser_session
-
-
-def test_pickup_date_and_time_appear_once_as_a_receipt_line_item_note(square_app):
-    menu = square_app.extensions["menu_provider"].snapshot()
-    commerce = square_app.extensions["square_commerce"]
-
-    order = commerce.order_payload(
-        lines=[{"item_id": "VAR_PLAIN", "quantity": 2, "modifiers": []}],
-        items_by_id=menu.items_by_id,
-        service_at=datetime(
-            2026, 8, 6, 16, tzinfo=ZoneInfo("America/New_York")
-        ),
-        customer={
-            "name": "Alex Customer",
-            "email": "alex@example.com",
-            "phone": "+15185550100",
-        },
-    )
-
-    assert [line.get("note") for line in order["line_items"]] == [
-        "Pickup: Thursday, August 6 at 4:00 PM",
-        None,
-    ]
-    assert order["fulfillments"][0]["pickup_details"]["pickup_at"] == (
-        "2026-08-06T16:00:00-04:00"
-    )
 
 
 def test_checkout_does_not_reread_capacity_after_customer_reviews_order(square_app):
@@ -974,22 +940,38 @@ def test_gift_card_checkout_loads_square_fields_with_restricted_csp():
     assert "https://sandbox.web.squarecdn.com" in csp
     assert "https://pci-connect.squareupsandbox.com" in csp
     assert "frame-src 'self' https://sandbox.web.squarecdn.com" in csp
-    assert app.square_fixture.created_order["state"] == "DRAFT"
-    assert app.square_fixture.order_update_bodies == []
-    assert app.square_fixture.payment_bodies == []
 
 
-def test_abandoned_gift_card_screen_never_opens_or_charges_the_draft_order():
+def test_abandoned_gift_card_checkout_stays_draft_until_payment():
     app = gift_card_app(gift_amount=3348)
     client = app.test_client()
-    _, attempt_id = start_gift_card_checkout(app, client)
+    token, attempt_id = start_gift_card_checkout(app, client)
+    fixture = app.square_fixture
 
-    page = client.get(f"/checkout/gift-card?attempt={attempt_id}")
+    client.get(f"/checkout/gift-card?attempt={attempt_id}")
 
-    assert page.status_code == 200
-    assert app.square_fixture.created_order["state"] == "DRAFT"
-    assert app.square_fixture.order_update_bodies == []
-    assert app.square_fixture.payment_bodies == []
+    assert fixture.created_order["state"] == "DRAFT"
+    assert fixture.order_update_bodies == []
+    assert fixture.payment_bodies == []
+
+    paid = client.post(
+        "/api/gift-card/payment",
+        json={
+            "attempt_id": attempt_id,
+            "payment_method": "gift_card",
+            "source_id": "gift-token",
+        },
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert paid.status_code == 200
+    assert paid.get_json()["status"] == "COMPLETED"
+    assert len(fixture.order_update_bodies) == 1
+    assert fixture.created_order["id"] == "GIFT_ORDER_12345678"
+    paths = [(request.method, request.url.path) for request in fixture.requests]
+    assert paths.index(("PUT", "/v2/orders/GIFT_ORDER_12345678")) < paths.index(
+        ("POST", "/v2/payments")
+    )
 
 
 def test_gift_card_can_pay_the_full_order_and_show_a_receipt():
@@ -1012,7 +994,6 @@ def test_gift_card_can_pay_the_full_order_and_show_a_receipt():
     assert "gift-token" not in paid.get_data(as_text=True)
     fixture = app.square_fixture
     assert fixture.payment_bodies[0]["accept_partial_authorization"] is True
-    assert len(fixture.order_update_bodies) == 1
     assert fixture.payment_bodies[0]["amount_money"]["amount"] == 3348
     assert fixture.pay_order_body["payment_ids"] == ["GIFT_PAYMENT"]
     uuid.UUID(fixture.payment_bodies[0]["idempotency_key"])
@@ -1080,7 +1061,6 @@ def test_partial_gift_card_collects_the_remainder_on_one_square_order():
     ]
     assert fixture.created_order["id"] == "GIFT_ORDER_12345678"
     assert fixture.created_order["state"] == "COMPLETED"
-    assert len(fixture.order_update_bodies) == 1
 
 
 def test_interrupted_gift_card_completion_is_not_retried_automatically():
@@ -1295,6 +1275,46 @@ def test_unpaid_hosted_checkout_drafts_do_not_consume_capacity():
     assert payload["slots"][0]["remaining"] == 3
     assert payload["slots"][0]["status"] == "3 pizzas available"
     assert fixture.canceled is False
+    search_request = next(
+        request for request in fixture.requests
+        if request.url.path == "/v2/orders/search"
+    )
+    states = json.loads(search_request.content)["query"]["filter"][
+        "state_filter"
+    ]["states"]
+    assert states == ["OPEN", "COMPLETED"]
+
+
+def test_pickup_time_is_added_once_to_the_first_receipt_line(square_app):
+    service_at = datetime(
+        2026, 8, 13, 17, 45, tzinfo=ZoneInfo("America/New_York")
+    )
+    menu = square_app.extensions["menu_provider"].snapshot()
+
+    order = square_app.extensions["square_commerce"].order_payload(
+        lines=[
+            {
+                "item_id": "VAR_PLAIN",
+                "quantity": 2,
+                "modifiers": [],
+            }
+        ],
+        items_by_id=menu.items_by_id,
+        service_at=service_at,
+        customer={
+            "name": "Alex Customer",
+            "email": "alex@example.com",
+            "phone": "+15185550100",
+        },
+    )
+
+    assert [line.get("note") for line in order["line_items"]] == [
+        "Pickup: Thursday, August 13 at 5:45 PM",
+        None,
+    ]
+    assert order["fulfillments"][0]["pickup_details"]["pickup_at"] == (
+        "2026-08-13T17:45:00-04:00"
+    )
 
 
 def test_square_network_errors_do_not_expose_access_token(square_app):
