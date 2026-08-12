@@ -24,10 +24,6 @@
     element.style.backgroundImage = url ? `url(${JSON.stringify(url)})` : '';
   };
 
-  const cartQuantityForItem = (itemId) => data.cart.lines
-    .filter((line) => line.item_id === itemId)
-    .reduce((total, line) => total + line.quantity, 0);
-
   document.querySelectorAll('.menu-photo[data-image-url]').forEach((photo) => {
     setBackgroundImage(photo, photo.dataset.imageUrl);
   });
@@ -58,19 +54,21 @@
     empty.hidden = cart.lines.length > 0;
     footer.hidden = cart.lines.length === 0;
     lines.innerHTML = cart.lines.map((line) => {
+      const item = data.menu[line.item_id];
+      const itemCount = cart.lines
+        .filter((candidate) => candidate.item_id === line.item_id)
+        .reduce((total, candidate) => total + candidate.quantity, 0);
       const increaseHitsPizzaLimit = line.capacity_category === 'pizza'
         && cart.totals.pizza_count >= data.pizzaLimit;
       const increaseHitsTotalLimit = cart.totals.item_count >= data.totalLimit;
-      const increaseHitsStock = Number.isInteger(line.stock_quantity)
-        && cart.lines
-          .filter((candidate) => candidate.item_id === line.item_id)
-          .reduce((total, candidate) => total + candidate.quantity, 0) >= line.stock_quantity;
-      const increaseDisabled = increaseHitsStock || increaseHitsPizzaLimit || increaseHitsTotalLimit;
+      const increaseHitsStock = Number.isInteger(item?.stock_count)
+        && itemCount >= item.stock_count;
+      const increaseDisabled = increaseHitsPizzaLimit || increaseHitsTotalLimit || increaseHitsStock;
       const increaseTitle = increaseHitsStock
-        ? `Only ${line.stock_quantity} available`
-        : (increaseHitsPizzaLimit
+        ? `Only ${item.stock_count} left in stock`
+        : increaseHitsPizzaLimit
         ? `${data.pizzaLimit} pizza maximum reached`
-        : (increaseHitsTotalLimit ? `${data.totalLimit} item maximum reached` : ''));
+        : (increaseHitsTotalLimit ? `${data.totalLimit} item maximum reached` : '');
       return `
       <div class="cart-line" data-cart-line="${escapeHtml(line.id)}">
         <strong>${escapeHtml(line.name)}</strong>
@@ -159,11 +157,14 @@
     const quantityUp = document.querySelector('#quantity-up');
     const pizzaCount = data.cart.totals.pizza_count;
     const itemCount = data.cart.totals.item_count;
-    const stockRemaining = Number.isInteger(activeItem.stock_quantity)
-      ? Math.max(0, activeItem.stock_quantity - cartQuantityForItem(activeItem.id))
+    const activeItemCount = data.cart.lines
+      .filter((line) => line.item_id === activeItem.id)
+      .reduce((total, line) => total + line.quantity, 0);
+    const hasStockLimit = Number.isInteger(activeItem.stock_count);
+    const stockRemaining = hasStockLimit
+      ? Math.max(0, activeItem.stock_count - activeItemCount)
       : null;
-    const exceedsStock = stockRemaining !== null && quantity > stockRemaining;
-    const reachesStock = stockRemaining !== null && quantity >= stockRemaining;
+    const reachesStockLimit = hasStockLimit && quantity >= stockRemaining;
     const reachesPizzaLimit = activeItem.capacity_category === 'pizza'
       && pizzaCount + quantity >= data.pizzaLimit;
     const reachesTotalLimit = itemCount + quantity >= data.totalLimit;
@@ -172,17 +173,15 @@
     button.classList.remove('button-limit');
     price.hidden = false;
     label.textContent = 'Add to order';
-    quantityUp.disabled = reachesStock || reachesPizzaLimit || reachesTotalLimit;
-    quantityUp.title = reachesStock
-      ? `Only ${activeItem.stock_quantity} available`
-      : (reachesPizzaLimit
+    quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit || reachesStockLimit;
+    quantityUp.title = reachesStockLimit
+      ? `Only ${stockRemaining} left in stock`
+      : reachesPizzaLimit
       ? `${data.pizzaLimit} pizza maximum`
-      : (reachesTotalLimit ? `${data.totalLimit} item maximum` : ''));
+      : (reachesTotalLimit ? `${data.totalLimit} item maximum` : '');
 
-    if (exceedsStock) {
-      label.textContent = stockRemaining === 0
-        ? 'Square stock limit already in cart'
-        : `Only ${stockRemaining} more available`;
+    if (hasStockLimit && stockRemaining === 0) {
+      label.textContent = 'Out of stock';
       price.hidden = true;
       button.disabled = true;
       button.classList.add('button-limit');
@@ -238,11 +237,11 @@
       document.querySelector('#item-category').textContent = activeItem.category_label;
       document.querySelector('#item-name').textContent = activeItem.name;
       document.querySelector('#item-description').textContent = activeItem.description;
-      const stockMessage = document.querySelector('#item-stock');
-      stockMessage.textContent = activeItem.low_stock
-        ? `Low stock · ${activeItem.stock_quantity} left`
+      const itemStock = document.querySelector('#item-stock');
+      itemStock.hidden = !activeItem.low_stock;
+      itemStock.textContent = activeItem.low_stock
+        ? `Low stock · ${activeItem.stock_count} left`
         : '';
-      stockMessage.hidden = !activeItem.low_stock;
       const itemArt = document.querySelector('#item-art');
       itemArt.className = activeItem.image_url
         ? 'pizza-art item-photo'
@@ -302,9 +301,12 @@
     if (data.cart.totals.item_count + nextQuantity > data.totalLimit) {
       return;
     }
+    const activeItemCount = data.cart.lines
+      .filter((line) => line.item_id === activeItem.id)
+      .reduce((total, line) => total + line.quantity, 0);
     if (
-      Number.isInteger(activeItem.stock_quantity)
-      && cartQuantityForItem(activeItem.id) + nextQuantity > activeItem.stock_quantity
+      Number.isInteger(activeItem.stock_count)
+      && activeItemCount + nextQuantity > activeItem.stock_count
     ) {
       return;
     }

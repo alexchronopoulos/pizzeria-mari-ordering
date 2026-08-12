@@ -89,12 +89,12 @@ class MenuItem:
     additions: tuple[Addition, ...] = field(default_factory=tuple)
     modifier_groups: tuple[ModifierGroup, ...] = field(default_factory=tuple)
     available: bool = True
-    stock_quantity: int | None = None
-    low_stock: bool = False
     art: str = "plain"
     image_url: str | None = None
     catalog_object_id: str | None = None
     catalog_version: int | None = None
+    stock_count: int | None = None
+    low_stock: bool = False
 
     def public_dict(self) -> dict:
         return {
@@ -109,7 +109,7 @@ class MenuItem:
             "additions": [option.public_dict() for option in self.additions],
             "modifier_groups": [group.public_dict() for group in self.modifier_groups],
             "available": self.available,
-            "stock_quantity": self.stock_quantity,
+            "stock_count": self.stock_count,
             "low_stock": self.low_stock,
             "art": self.art,
             "image_url": self.image_url,

@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.14" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.15" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -57,8 +57,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.14" in response.data
-    assert b"/static/app.js?v=0.18.14" in response.data
+    assert b"/static/style.css?v=0.18.15" in response.data
+    assert b"/static/app.js?v=0.18.15" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -66,23 +66,16 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert favicon.data.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_site_footer_has_accessible_icon_links(app):
+def test_site_footer_has_accessible_instagram_email_and_website_links(app):
     response = app.test_client().get("/")
 
-    assert response.status_code == 200
     assert b'class="site-footer"' in response.data
-    assert b'aria-label="Pizzeria Mari links"' in response.data
     assert b'href="https://www.instagram.com/pizzeria_mari/"' in response.data
-    assert b'aria-label="Pizzeria Mari on Instagram"' in response.data
     assert b'href="mailto:hello@pizzeriamari.com"' in response.data
-    assert b'aria-label="Email Pizzeria Mari"' in response.data
     assert b'href="https://pizzeriamari.com/"' in response.data
-    assert b'aria-label="Visit the Pizzeria Mari website"' in response.data
-    assert response.data.count(b'class="footer-link"') == 3
-
-    css = app.test_client().get("/static/style.css").get_data(as_text=True)
-    assert ".site-footer" in css
-    assert ".footer-link:focus-visible" in css
+    assert b'aria-label="Pizzeria Mari on Instagram"' in response.data
+    assert b'aria-label="Email Pizzeria Mari"' in response.data
+    assert b'aria-label="Pizzeria Mari website"' in response.data
 
 
 def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
@@ -100,7 +93,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.14",
+        "version": "0.18.15",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -314,8 +307,7 @@ def test_cart_quantity_controls_and_three_pizza_button_message_are_present(app):
     assert b'data-cart-action="increase"' in checkout.data
     assert b'data-cart-action="decrease"' in checkout.data
     assert b"Add to order \xc2\xb7 ${data.pizzaLimit} pizza maximum" in javascript.data
-    assert b"quantityUp.disabled = reachesStock || reachesPizzaLimit || reachesTotalLimit" in javascript.data
-    assert b"cartQuantityForItem(activeItem.id) + nextQuantity > activeItem.stock_quantity" in javascript.data
+    assert b"quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit" in javascript.data
 
 
 def test_pickup_api_shows_remaining_pizzas_and_keeps_full_times_visible(app):

@@ -136,35 +136,6 @@ class SquareClient:
             if not cursor:
                 return objects
 
-    def batch_retrieve_inventory_counts(
-        self, *, catalog_object_ids: list[str], location_id: str
-    ) -> list[dict]:
-        if not catalog_object_ids:
-            return []
-        counts: list[dict] = []
-        for start in range(0, len(catalog_object_ids), 1000):
-            object_ids = catalog_object_ids[start : start + 1000]
-            cursor = None
-            while True:
-                body = {
-                    "catalog_object_ids": object_ids,
-                    "location_ids": [location_id],
-                    "states": ["IN_STOCK"],
-                    "limit": 1000,
-                }
-                if cursor:
-                    body["cursor"] = cursor
-                payload = self.request(
-                    "POST",
-                    "/v2/inventory/counts/batch-retrieve",
-                    json_body=body,
-                )
-                counts.extend(payload.get("counts", []))
-                cursor = payload.get("cursor")
-                if not cursor:
-                    break
-        return counts
-
     def calculate_order(self, order: dict) -> dict:
         payload = self.request(
             "POST", "/v2/orders/calculate", json_body={"order": order}
@@ -192,6 +163,29 @@ class SquareClient:
             f"/v2/orders/{order_id}",
             json_body=request_body,
         )
+
+    def batch_retrieve_inventory_counts(
+        self, *, catalog_object_ids: list[str], location_ids: list[str]
+    ) -> list[dict]:
+        counts: list[dict] = []
+        cursor = None
+        while True:
+            body = {
+                "catalog_object_ids": catalog_object_ids,
+                "location_ids": location_ids,
+                "states": ["IN_STOCK"],
+            }
+            if cursor:
+                body["cursor"] = cursor
+            payload = self.request(
+                "POST",
+                "/v2/inventory/counts/batch-retrieve",
+                json_body=body,
+            )
+            counts.extend(payload.get("counts", []))
+            cursor = payload.get("cursor")
+            if not cursor:
+                return counts
 
     def create_payment(self, request_body: dict) -> dict:
         return self.request(
@@ -225,7 +219,9 @@ class SquareClient:
                 "return_entries": False,
                 "query": {
                     "filter": {
-                        "state_filter": {"states": ["OPEN", "COMPLETED"]},
+                        "state_filter": {
+                            "states": ["OPEN", "COMPLETED"]
+                        },
                         "date_time_filter": {
                             "created_at": {
                                 "start_at": created_after.astimezone(timezone.utc)
@@ -278,24 +274,27 @@ def _sold_out(data: dict, location_id: str) -> bool:
     return bool(_location_override(data, location_id).get("sold_out", False))
 
 
-def _tracks_inventory(data: dict, location_id: str) -> bool:
+def _inventory_tracked(data: dict, location_id: str) -> bool:
     override = _location_override(data, location_id)
-    return bool(override.get("track_inventory", data.get("track_inventory", False)))
+    if "track_inventory" in override:
+        return bool(override["track_inventory"])
+    return bool(data.get("track_inventory", False))
 
 
-def _inventory_alert(data: dict, location_id: str) -> tuple[str | None, int | None]:
+def _low_stock_threshold(data: dict, location_id: str) -> int | None:
     override = _location_override(data, location_id)
-    alert_type = override.get("inventory_alert_type")
-    threshold = override.get("inventory_alert_threshold")
-    if alert_type is None:
-        alert_type = data.get("inventory_alert_type")
-    if threshold is None:
-        threshold = data.get("inventory_alert_threshold")
+    alert_type = override.get(
+        "inventory_alert_type", data.get("inventory_alert_type")
+    )
+    threshold = override.get(
+        "inventory_alert_threshold", data.get("inventory_alert_threshold")
+    )
+    if alert_type != "LOW_QUANTITY" or threshold is None:
+        return None
     try:
-        parsed_threshold = int(threshold) if threshold is not None else None
+        return int(threshold)
     except (TypeError, ValueError):
-        parsed_threshold = None
-    return alert_type, parsed_threshold
+        return None
 
 
 def _category_ids(item_data: dict) -> list[str]:
@@ -396,64 +395,61 @@ class SquareCatalogProvider:
             now = time.monotonic()
             if self._cached and now - self._cached_at < self.cache_seconds:
                 return self._cached
-            objects = self.client.list_catalog()
-            tracked_ids = self._tracked_variation_ids(objects)
-            inventory_counts = self.client.batch_retrieve_inventory_counts(
-                catalog_object_ids=tracked_ids,
-                location_id=self.location_id,
-            )
-            snapshot = self._build(objects, inventory_counts)
+            snapshot = self._fresh_snapshot()
             self._cached = snapshot
             self._cached_at = now
+            return snapshot
+
+    def refresh_snapshot(self) -> MenuSnapshot:
+        """Refresh catalog and inventory for checkout revalidation."""
+        with self._lock:
+            snapshot = self._fresh_snapshot()
+            self._cached = snapshot
+            self._cached_at = time.monotonic()
             return snapshot
 
     def cached_snapshot(self) -> MenuSnapshot | None:
         """Return the menu already shown to this process without a network read."""
         return self._cached
 
-    def _tracked_variation_ids(self, objects: list[dict]) -> list[str]:
-        category_ids = {
-            obj["id"]
-            for obj in objects
-            if obj.get("type") == "CATEGORY"
-            and not obj.get("is_deleted", False)
-            and obj.get("category_data", {}).get("name")
-            in self.allowed_category_names
-        }
-        return [
+    def _fresh_snapshot(self) -> MenuSnapshot:
+        objects = self.client.list_catalog()
+        tracked_ids = sorted(
             variation["id"]
-            for item_object in objects
-            if item_object.get("type") == "ITEM"
-            and not item_object.get("is_deleted", False)
-            and any(
-                category_id in category_ids
-                for category_id in _category_ids(item_object.get("item_data", {}))
-            )
-            for variation in item_object.get("item_data", {}).get("variations", [])
+            for obj in objects
+            if obj.get("type") == "ITEM" and not obj.get("is_deleted", False)
+            for variation in obj.get("item_data", {}).get("variations", [])
             if variation.get("id")
             and not variation.get("is_deleted", False)
             and _present_at_location(variation, self.location_id)
-            and _tracks_inventory(
+            and _inventory_tracked(
                 variation.get("item_variation_data", {}), self.location_id
             )
-        ]
+        )
+        inventory_counts: dict[str, int] = {}
+        if tracked_ids:
+            counts = self.client.batch_retrieve_inventory_counts(
+                catalog_object_ids=tracked_ids,
+                location_ids=[self.location_id],
+            )
+            for count in counts:
+                if (
+                    count.get("location_id") != self.location_id
+                    or count.get("state") != "IN_STOCK"
+                    or count.get("catalog_object_id") not in tracked_ids
+                ):
+                    continue
+                try:
+                    quantity = int(Decimal(str(count.get("quantity", "0"))))
+                except (ArithmeticError, ValueError):
+                    quantity = 0
+                inventory_counts[count["catalog_object_id"]] = max(0, quantity)
+        return self._build(objects, inventory_counts)
 
     def _build(
-        self, objects: list[dict], inventory_counts: list[dict] | None = None
+        self, objects: list[dict], inventory_counts: dict[str, int] | None = None
     ) -> MenuSnapshot:
-        stock_by_variation: dict[str, int] = {}
-        for count in inventory_counts or []:
-            if (
-                count.get("state") != "IN_STOCK"
-                or count.get("location_id") != self.location_id
-                or not count.get("catalog_object_id")
-            ):
-                continue
-            try:
-                quantity = int(Decimal(str(count.get("quantity", "0"))))
-            except (ArithmeticError, ValueError):
-                continue
-            stock_by_variation[count["catalog_object_id"]] = max(0, quantity)
+        inventory_counts = inventory_counts or {}
         categories = {
             obj["id"]: obj
             for obj in objects
@@ -541,20 +537,14 @@ class SquareCatalogProvider:
                     (images.get(image_id) for image_id in item_data.get("image_ids", []) if images.get(image_id)),
                     None,
                 )
-                tracks_inventory = _tracks_inventory(
-                    variation_data, self.location_id
-                )
-                stock_quantity = (
-                    stock_by_variation.get(variation["id"])
-                    if tracks_inventory
-                    else None
-                )
-                alert_type, alert_threshold = _inventory_alert(
-                    variation_data, self.location_id
+                tracked = _inventory_tracked(variation_data, self.location_id)
+                stock_count = (
+                    inventory_counts.get(variation["id"], 0) if tracked else None
                 )
                 sold_out = _sold_out(variation_data, self.location_id)
-                if stock_quantity == 0:
-                    sold_out = True
+                threshold = _low_stock_threshold(
+                    variation_data, self.location_id
+                )
                 grouped[category_id].append(
                     MenuItem(
                         id=variation["id"],
@@ -570,18 +560,21 @@ class SquareCatalogProvider:
                         or "",
                         additions=additions,
                         modifier_groups=modifier_groups,
-                        available=not sold_out,
-                        stock_quantity=stock_quantity,
-                        low_stock=bool(
+                        available=(
                             not sold_out
-                            and alert_type == "LOW_QUANTITY"
-                            and alert_threshold is not None
-                            and stock_quantity is not None
-                            and stock_quantity <= alert_threshold
+                            and (stock_count is None or stock_count > 0)
                         ),
                         image_url=image_url,
                         catalog_object_id=variation["id"],
                         catalog_version=variation.get("version"),
+                        stock_count=stock_count,
+                        low_stock=(
+                            not sold_out
+                            and stock_count is not None
+                            and stock_count > 0
+                            and threshold is not None
+                            and stock_count <= threshold
+                        ),
                     )
                 )
 
@@ -845,16 +838,9 @@ class SquareCommerce:
         notes: str = "",
         reference_id: str | None = None,
     ) -> dict:
-        line_items = self._order_line_items(lines, items_by_id)
-        if service_at and line_items:
-            date_text = service_at.strftime("%A, %B")
-            time_text = service_at.strftime("%I:%M %p").lstrip("0")
-            line_items[0]["note"] = (
-                f"Pickup: {date_text} {service_at.day} at {time_text}"
-            )
         order = {
             "location_id": self.location_id,
-            "line_items": line_items,
+            "line_items": self._order_line_items(lines, items_by_id),
             "pricing_options": {
                 "auto_apply_taxes": True,
                 "auto_apply_discounts": True,
@@ -876,6 +862,10 @@ class SquareCommerce:
             }
             if notes:
                 pickup_details["note"] = notes
+            if order["line_items"]:
+                order["line_items"][0]["note"] = (
+                    f"Pickup: {service_at.strftime('%A, %B %-d at %-I:%M %p')}"
+                )
             order["fulfillments"] = [
                 {
                     "type": "PICKUP",
@@ -1108,31 +1098,23 @@ class SquareCommerce:
         if payment_method == "card" and not state["gift_card_applied"]:
             raise SquareAPIError("Apply a Square gift card before paying the remainder by card.")
         if order.get("state") == "DRAFT":
-            version = order.get("version")
-            if not isinstance(version, int):
-                raise SquareAPIError(
-                    "Square did not return a valid gift-card order. Please try again."
-                )
-            opened_payload = self.client.update_order(
+            payload = self.client.update_order(
                 order_id,
                 {
                     "idempotency_key": str(uuid.uuid4()),
                     "order": {
-                        # Square validates the location as part of the complete
-                        # versioned Order object used for this state change.
                         "location_id": self.location_id,
-                        "version": version,
+                        "version": order["version"],
                         "state": "OPEN",
                     },
                 },
             )
-            opened_order = opened_payload.get("order")
-            if not opened_order or opened_order.get("state") != "OPEN":
+            order = payload.get("order")
+            if not order or order.get("state") != "OPEN":
                 raise SquareAPIError(
-                    "Square could not open the gift-card order. Please try again."
+                    "Square could not open that gift-card order. Please try again."
                 )
-            state = {**state, "order": opened_order}
-            order = opened_order
+            state = {**state, "order": order}
         request_body = {
             "source_id": source_id,
             "idempotency_key": str(uuid.uuid4()),

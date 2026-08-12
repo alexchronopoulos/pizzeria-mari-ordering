@@ -33,9 +33,9 @@ def validate_cart(
 
     for item_id, quantity in item_counts.items():
         item = items_by_id[item_id]
-        if item.stock_quantity is not None and quantity > item.stock_quantity:
+        if item.stock_count is not None and quantity > item.stock_count:
             raise CartLimitError(
-                f"Only {item.stock_quantity} of {item.name} remain in stock."
+                f"Only {item.stock_count} {item.name} left in stock."
             )
 
     for category, limit in category_limits.items():

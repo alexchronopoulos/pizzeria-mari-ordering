@@ -98,8 +98,12 @@ def _save_cart(lines: list[dict]) -> None:
     session.modified = True
 
 
-def _menu(*, allow_stale: bool = False) -> MenuSnapshot:
+def _menu(*, allow_stale: bool = False, refresh: bool = False) -> MenuSnapshot:
     provider = current_app.extensions["menu_provider"]
+    if refresh:
+        refresh_snapshot = getattr(provider, "refresh_snapshot", None)
+        if refresh_snapshot is not None:
+            return refresh_snapshot()
     if allow_stale:
         cached_snapshot = getattr(provider, "cached_snapshot", None)
         cached = cached_snapshot() if cached_snapshot else None
@@ -458,7 +462,6 @@ def _cart_payload(lines: list[dict], items_by_id: dict[str, MenuItem]) -> dict:
                 **line,
                 "name": item.name,
                 "capacity_category": item.capacity_category,
-                "stock_quantity": item.stock_quantity,
                 "modifiers": [
                     modifier.get("display", modifier.get("name", ""))
                     if isinstance(modifier, dict)
@@ -795,19 +798,8 @@ def checkout():
     lines = _cart()
     if not lines:
         return redirect(url_for("storefront.index"))
-    menu = _menu(allow_stale=request.method == "POST")
+    menu = _menu(refresh=request.method == "POST")
     items_by_id = menu.items_by_id
-    try:
-        validate_cart(
-            lines,
-            items_by_id,
-            current_app.config["CART_TOTAL_LIMIT"],
-            current_app.config["CATEGORY_LIMITS"],
-        )
-    except CartLimitError as exc:
-        cart_validation_error = str(exc)
-    else:
-        cart_validation_error = None
     availability_counts = (
         _pizza_counts(menu) if request.method == "GET" else None
     )
@@ -818,6 +810,17 @@ def checkout():
     )
     if not selected:
         return redirect(url_for("storefront.index"))
+
+    try:
+        validate_cart(
+            lines,
+            items_by_id,
+            current_app.config["CART_TOTAL_LIMIT"],
+            current_app.config["CATEGORY_LIMITS"],
+        )
+        cart_validation_error = None
+    except CartLimitError as exc:
+        cart_validation_error = str(exc)
 
     pricing = _pricing(lines, items_by_id)
     error = session.pop("checkout_error", None) or cart_validation_error

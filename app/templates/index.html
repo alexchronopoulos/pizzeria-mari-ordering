@@ -46,7 +46,7 @@
                   {% if not item.available %}
                     <em>Out of stock</em>
                   {% elif item.low_stock %}
-                    <em class="low-stock">Low stock · {{ item.stock_quantity }} left</em>
+                    <em class="menu-stock">Low stock · {{ item.stock_count }} left</em>
                   {% endif %}
                 </span>
               </button>
