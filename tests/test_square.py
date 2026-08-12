@@ -446,7 +446,7 @@ class InventoryFixture(SquareFixture):
         self,
         *,
         quantity: int,
-        threshold: int = 3,
+        threshold: int | None = 3,
         alert_type: str = "LOW_QUANTITY",
     ):
         super().__init__()
@@ -466,13 +466,19 @@ class InventoryFixture(SquareFixture):
                 for variation in obj["item_data"]["variations"]
                 if variation["id"] == "VAR_PLAIN"
             )
+            location_override = {
+                "location_id": "LOCATION",
+                "track_inventory": True,
+            }
+            if self.threshold is not None:
+                location_override.update(
+                    {
+                        "inventory_alert_type": self.alert_type,
+                        "inventory_alert_threshold": self.threshold,
+                    }
+                )
             variation["item_variation_data"]["location_overrides"] = [
-                {
-                    "location_id": "LOCATION",
-                    "track_inventory": True,
-                    "inventory_alert_type": self.alert_type,
-                    "inventory_alert_threshold": self.threshold,
-                }
+                location_override
             ]
             return httpx.Response(200, json={"objects": objects})
         if (
@@ -545,7 +551,7 @@ def gift_card_app(*, gift_amount: int):
     return app
 
 
-def inventory_app(*, quantity: int, threshold: int = 3):
+def inventory_app(*, quantity: int, threshold: int | None = 3):
     fixture = InventoryFixture(quantity=quantity, threshold=threshold)
     app = create_app(
         {
@@ -621,6 +627,17 @@ def test_location_low_stock_is_rendered_on_the_menu_card_and_item_dialog():
     javascript = app.test_client().get("/static/app.js").get_data(as_text=True)
     assert "itemStock.textContent" in javascript
     assert "Low stock · ${activeItem.stock_count} left" in javascript
+
+
+def test_tracked_pizza_with_one_left_is_low_stock_without_square_alert_metadata():
+    app = inventory_app(quantity=1, threshold=None)
+    response = app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert b"Low stock \xc2\xb7 1 left" in response.data
+    assert b'class="menu-stock"' in response.data
+    assert b'"low_stock": true' in response.data
+    assert b'"stock_count": 1' in response.data
 
 
 def test_inventory_count_limits_the_cart_and_zero_count_is_out_of_stock():
@@ -932,7 +949,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.15" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.16" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript

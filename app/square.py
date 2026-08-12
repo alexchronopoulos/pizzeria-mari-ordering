@@ -28,6 +28,9 @@ SQUARE_BASE_URLS = {
 }
 CHECKOUT_REFERENCE_PREFIX = "PMOC-"
 GIFT_CARD_REFERENCE_PREFIX = "PMGC-"
+DEFAULT_PIZZA_LOW_STOCK_THRESHOLD = 3
+
+
 class SquareAPIError(RuntimeError):
     def __init__(
         self,
@@ -542,8 +545,17 @@ class SquareCatalogProvider:
                     inventory_counts.get(variation["id"], 0) if tracked else None
                 )
                 sold_out = _sold_out(variation_data, self.location_id)
-                threshold = _low_stock_threshold(
+                configured_threshold = _low_stock_threshold(
                     variation_data, self.location_id
+                )
+                low_stock_threshold = (
+                    configured_threshold
+                    if configured_threshold is not None
+                    else (
+                        DEFAULT_PIZZA_LOW_STOCK_THRESHOLD
+                        if category_name in self.pizza_category_names
+                        else None
+                    )
                 )
                 grouped[category_id].append(
                     MenuItem(
@@ -572,8 +584,8 @@ class SquareCatalogProvider:
                             not sold_out
                             and stock_count is not None
                             and stock_count > 0
-                            and threshold is not None
-                            and stock_count <= threshold
+                            and low_stock_threshold is not None
+                            and stock_count <= low_stock_threshold
                         ),
                     )
                 )
