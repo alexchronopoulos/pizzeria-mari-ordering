@@ -40,7 +40,11 @@
       <p>Online tips, Marketing coupons, and automatic receipt emails are not available with gift-card checkout. A Square receipt link appears after payment.</p>
     </div>
 
-    <a class="text-button" href="{{ url_for('storefront.checkout') }}">Return to checkout</a>
+    <a
+      class="text-button"
+      id="gift-card-exit"
+      href="{% if payment_state.giftCardApplied %}{{ url_for('storefront.checkout_complete', attempt=pending.attempt_id) }}{% else %}{{ url_for('storefront.checkout') }}{% endif %}"
+    >{% if payment_state.giftCardApplied %}Check payment status{% else %}Return to checkout{% endif %}</a>
   </section>
 </main>
 
@@ -53,9 +57,12 @@
     "paidCents": payment_state.paidCents,
     "remainingCents": payment_state.remainingCents,
     "totalCents": payment_state.totalCents,
+    "statusUrl": url_for('gift_card_recovery_status', attempt=pending.attempt_id),
+    "confirmationUrl": url_for('storefront.checkout_complete', attempt=pending.attempt_id),
+    "checkoutUrl": url_for('storefront.checkout'),
     "billingContact": billing_contact
   }|tojson }};
 </script>
 <script nonce="{{ csp_nonce }}" src="{{ square_sdk_url }}" defer></script>
-<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='gift-card.js', v=asset_version) }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='gift-card.js', v=gift_card_asset_version) }}" defer></script>
 {% endblock %}

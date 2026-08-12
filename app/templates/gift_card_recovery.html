@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Check Gift Card Payment | Pizzeria Mari Order Online{% endblock %}
+{% block body %}
+<main class="confirmation-shell payment-pending-shell">
+  <span class="eyebrow">Gift card checkout</span>
+  <h1>Let’s verify your earlier payment.</h1>
+  <p>We couldn’t confirm the status of the gift-card checkout, so we did not start another order. This prevents a duplicate payment.</p>
+  <p>Please wait a moment and check the existing order again. If the message continues, contact Pizzeria Mari before submitting another payment.</p>
+  <div class="pending-actions">
+    <a class="button button-primary" href="{{ url_for('storefront.gift_card_checkout', attempt=attempt_id) }}">Check existing payment</a>
+    <a class="button button-light" href="mailto:hello@pizzeriamari.com">Email Pizzeria Mari</a>
+  </div>
+</main>
+{% endblock %}
