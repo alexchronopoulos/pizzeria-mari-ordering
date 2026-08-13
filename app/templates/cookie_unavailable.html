@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Cookie Availability | Pizzeria Mari Order Online{% endblock %}
+
+{% block body %}
+<main class="confirmation-shell">
+  <section class="confirmation-card">
+    <span class="eyebrow">Pickup-day availability</span>
+    <h1>Cookies are available Friday through Sunday.</h1>
+    <p>Your cart contains a Cookie, but your selected pickup is not on one of those days. Return to the menu to remove it or choose a Friday, Saturday, or Sunday pickup.</p>
+    <a class="button button-primary" href="{{ url_for('storefront.index') }}#cart">Return to your cart</a>
+  </section>
+</main>
+{% endblock %}

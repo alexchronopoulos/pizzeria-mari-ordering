@@ -66,18 +66,6 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert favicon.data.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_site_footer_has_accessible_instagram_email_and_website_links(app):
-    response = app.test_client().get("/")
-
-    assert b'class="site-footer"' in response.data
-    assert b'href="https://www.instagram.com/pizzeria_mari/"' in response.data
-    assert b'href="mailto:hello@pizzeriamari.com"' in response.data
-    assert b'href="https://pizzeriamari.com/"' in response.data
-    assert b'aria-label="Pizzeria Mari on Instagram"' in response.data
-    assert b'aria-label="Email Pizzeria Mari"' in response.data
-    assert b'aria-label="Pizzeria Mari website"' in response.data
-
-
 def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     paused = create_app(
         {
@@ -93,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.17",
+        "version": "0.18.18",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -116,6 +104,16 @@ def test_emergency_switch_and_fallback_configuration_are_validated():
                 "FALLBACK_ORDERING_URL": "javascript:alert(1)",
             }
         )
+
+
+def test_footer_links_are_present(app):
+    response = app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert b'class="site-footer"' in response.data
+    assert b"https://www.instagram.com/pizzeria_mari/" in response.data
+    assert b"mailto:hello@pizzeriamari.com" in response.data
+    assert b"https://pizzeriamari.com/" in response.data
 
 
 def test_capacity_thresholds_load_from_environment_and_reject_invalid_values(

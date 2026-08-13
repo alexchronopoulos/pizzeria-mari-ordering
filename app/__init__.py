@@ -9,6 +9,7 @@ from flask import Flask, g
 from dotenv import load_dotenv
 
 from .capacity import DemoCapacityStore
+from .cookie_availability import install_cookie_availability
 from .gift_card_recovery import install_gift_card_recovery
 from .menu import StaticMenuProvider
 from .operations import configure_structured_logging
@@ -22,10 +23,7 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.17"
-# Only the gift-card script changes in this patch. Keep the shared asset URLs
-# stable so an incremental install does not invalidate every cached image,
-# font, stylesheet, and unrelated script.
+APP_VERSION = "0.18.18"
 SHARED_ASSET_VERSION = "0.18.16"
 
 
@@ -319,6 +317,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         g.csp_nonce = secrets.token_urlsafe(18)
 
     install_gift_card_recovery(app)
+    install_cookie_availability(app)
 
     @app.context_processor
     def inject_csp_nonce() -> dict:
