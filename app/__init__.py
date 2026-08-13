@@ -23,7 +23,7 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.20"
+APP_VERSION = "0.18.21"
 SHARED_ASSET_VERSION = "0.18.16"
 
 
@@ -324,6 +324,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         return {
             "csp_nonce": g.get("csp_nonce", ""),
             "asset_version": SHARED_ASSET_VERSION,
+            "storefront_asset_version": app.config["APP_VERSION"],
             "gift_card_asset_version": app.config["APP_VERSION"],
             "ordering_enabled": app.config["ORDERING_ENABLED"],
             "fallback_ordering_url": app.config["FALLBACK_ORDERING_URL"],

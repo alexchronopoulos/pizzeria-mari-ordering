@@ -6,7 +6,9 @@
   const slotGrid = document.querySelector('#slot-grid');
   const itemError = document.querySelector('#item-error');
   const slotCache = new Map(Object.entries(data.slotsByDate || {}));
+  const slotCacheTimes = new Map([...slotCache.keys()].map((date) => [date, Date.now()]));
   const slotRequests = new Map();
+  const slotCacheLifetime = 30000;
   let displayedSlotDate = null;
   let activeItem = null;
   let quantity = 1;
@@ -54,19 +56,11 @@
     empty.hidden = cart.lines.length > 0;
     footer.hidden = cart.lines.length === 0;
     lines.innerHTML = cart.lines.map((line) => {
-      const item = data.menu[line.item_id];
-      const itemCount = cart.lines
-        .filter((candidate) => candidate.item_id === line.item_id)
-        .reduce((total, candidate) => total + candidate.quantity, 0);
       const increaseHitsPizzaLimit = line.capacity_category === 'pizza'
         && cart.totals.pizza_count >= data.pizzaLimit;
       const increaseHitsTotalLimit = cart.totals.item_count >= data.totalLimit;
-      const increaseHitsStock = Number.isInteger(item?.stock_count)
-        && itemCount >= item.stock_count;
-      const increaseDisabled = increaseHitsPizzaLimit || increaseHitsTotalLimit || increaseHitsStock;
-      const increaseTitle = increaseHitsStock
-        ? `Only ${item.stock_count} left in stock`
-        : increaseHitsPizzaLimit
+      const increaseDisabled = increaseHitsPizzaLimit || increaseHitsTotalLimit;
+      const increaseTitle = increaseHitsPizzaLimit
         ? `${data.pizzaLimit} pizza maximum reached`
         : (increaseHitsTotalLimit ? `${data.totalLimit} item maximum reached` : '');
       return `
@@ -112,9 +106,13 @@
     const cached = slotCache.get(date);
     if (cached) renderSlots(cached);
     else slotGrid.innerHTML = '<p>Loading pickup times…</p>';
+    if (cached && Date.now() - (slotCacheTimes.get(date) || 0) < slotCacheLifetime) {
+      return;
+    }
     try {
       const payload = await fetchSlots(date);
       slotCache.set(date, payload.slots);
+      slotCacheTimes.set(date, Date.now());
       if (displayedSlotDate === date) renderSlots(payload.slots);
     } catch (error) {
       if (!cached && displayedSlotDate === date) {
@@ -157,14 +155,6 @@
     const quantityUp = document.querySelector('#quantity-up');
     const pizzaCount = data.cart.totals.pizza_count;
     const itemCount = data.cart.totals.item_count;
-    const activeItemCount = data.cart.lines
-      .filter((line) => line.item_id === activeItem.id)
-      .reduce((total, line) => total + line.quantity, 0);
-    const hasStockLimit = Number.isInteger(activeItem.stock_count);
-    const stockRemaining = hasStockLimit
-      ? Math.max(0, activeItem.stock_count - activeItemCount)
-      : null;
-    const reachesStockLimit = hasStockLimit && quantity >= stockRemaining;
     const reachesPizzaLimit = activeItem.capacity_category === 'pizza'
       && pizzaCount + quantity >= data.pizzaLimit;
     const reachesTotalLimit = itemCount + quantity >= data.totalLimit;
@@ -173,19 +163,12 @@
     button.classList.remove('button-limit');
     price.hidden = false;
     label.textContent = 'Add to order';
-    quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit || reachesStockLimit;
-    quantityUp.title = reachesStockLimit
-      ? `Only ${stockRemaining} left in stock`
-      : reachesPizzaLimit
+    quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit;
+    quantityUp.title = reachesPizzaLimit
       ? `${data.pizzaLimit} pizza maximum`
       : (reachesTotalLimit ? `${data.totalLimit} item maximum` : '');
 
-    if (hasStockLimit && stockRemaining === 0) {
-      label.textContent = 'Out of stock';
-      price.hidden = true;
-      button.disabled = true;
-      button.classList.add('button-limit');
-    } else if (activeItem.capacity_category === 'pizza' && pizzaCount >= data.pizzaLimit) {
+    if (activeItem.capacity_category === 'pizza' && pizzaCount >= data.pizzaLimit) {
       label.textContent = `${data.pizzaLimit} pizza maximum reached`;
       price.hidden = true;
       button.disabled = true;
@@ -237,11 +220,6 @@
       document.querySelector('#item-category').textContent = activeItem.category_label;
       document.querySelector('#item-name').textContent = activeItem.name;
       document.querySelector('#item-description').textContent = activeItem.description;
-      const itemStock = document.querySelector('#item-stock');
-      itemStock.hidden = !activeItem.low_stock;
-      itemStock.textContent = activeItem.low_stock
-        ? `Low stock · ${activeItem.stock_count} left`
-        : '';
       const itemArt = document.querySelector('#item-art');
       itemArt.className = activeItem.image_url
         ? 'pizza-art item-photo'
@@ -299,15 +277,6 @@
       return;
     }
     if (data.cart.totals.item_count + nextQuantity > data.totalLimit) {
-      return;
-    }
-    const activeItemCount = data.cart.lines
-      .filter((line) => line.item_id === activeItem.id)
-      .reduce((total, line) => total + line.quantity, 0);
-    if (
-      Number.isInteger(activeItem.stock_count)
-      && activeItemCount + nextQuantity > activeItem.stock_count
-    ) {
       return;
     }
     quantity = nextQuantity;

@@ -43,11 +43,7 @@
                   <strong>{{ item.name }}</strong>
                   <span>{{ item.description }}</span>
                   <span class="price">${{ '%.2f'|format(item.price_cents / 100) }}</span>
-                  {% if not item.available %}
-                    <em>Out of stock</em>
-                  {% elif item.low_stock %}
-                    <em class="menu-stock">Low stock · {{ item.stock_count }} left</em>
-                  {% endif %}
+                  {% if not item.available %}<em>Out of stock</em>{% endif %}
                 </span>
               </button>
             {% endfor %}
@@ -90,7 +86,6 @@
     <h2 id="item-name"></h2>
   </div>
   <p class="modal-lede" id="item-description"></p>
-  <p class="item-stock" id="item-stock" hidden></p>
   <div class="item-modal-row">
     <div>
       <span class="eyebrow">Quantity</span>
@@ -123,5 +118,5 @@
     "slotsByDate": slots_by_date
   }|tojson }};
 </script>
-<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js', v=asset_version) }}" defer></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js', v=storefront_asset_version) }}" defer></script>
 {% endblock %}

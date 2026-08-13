@@ -597,6 +597,8 @@ class SquareCommerce:
         self._pizza_counts_cache_ids: frozenset[str] = frozenset()
         self._pizza_counts_cached_at = 0.0
         self._pizza_counts_lock = threading.Lock()
+        self._payment_status_cache: dict[str, tuple[str, float]] = {}
+        self._payment_status_lock = threading.Lock()
 
     @staticmethod
     def _parse_datetime(value: str) -> datetime | None:
@@ -664,9 +666,8 @@ class SquareCommerce:
                 and reference_id.startswith(CHECKOUT_REFERENCE_PREFIX)
                 and not self._hosted_checkout_is_paid(order)
             ):
-                # Online Checkout can leave an OPEN order and tender behind
-                # after a card is declined. A Payment ID is not proof of a
-                # sale: only a COMPLETED payment may reserve pizza capacity.
+                # Hosted Checkout can leave an OPEN order and Payment ID after
+                # a decline. Only a completed payment reserves capacity.
                 continue
             pickup_at = None
             for fulfillment in order.get("fulfillments", []):
@@ -690,13 +691,31 @@ class SquareCommerce:
             counts[slot] = counts.get(slot, 0) + pizzas
         return counts
 
+    def _remember_payment_status(self, payment_id: str, status: str) -> None:
+        if not payment_id or not status:
+            return
+        with self._payment_status_lock:
+            self._payment_status_cache[payment_id] = (status, time.monotonic())
+
+    def _payment_status(self, payment_id: str) -> str:
+        checked_at = time.monotonic()
+        with self._payment_status_lock:
+            cached = self._payment_status_cache.get(payment_id)
+        if cached:
+            status, cached_at = cached
+            lifetime = 300.0 if status in {"COMPLETED", "FAILED", "CANCELED"} else 2.0
+            if checked_at - cached_at < lifetime:
+                return status
+
+        payment = self.client.retrieve_payment(payment_id)
+        status = str(payment.get("status", ""))
+        self._remember_payment_status(payment_id, status)
+        return status
+
     def _hosted_checkout_is_paid(self, order: dict) -> bool:
         for tender in order.get("tenders", []):
             payment_id = self._payment_id(tender)
-            if not payment_id:
-                continue
-            payment = self.client.retrieve_payment(payment_id)
-            if payment.get("status") == "COMPLETED":
+            if payment_id and self._payment_status(payment_id) == "COMPLETED":
                 return True
         return False
 
@@ -920,7 +939,11 @@ class SquareCommerce:
         for tender in order.get("tenders", []):
             payment_id = self._payment_id(tender)
             if payment_id:
-                payments.append(self.client.retrieve_payment(payment_id))
+                payment = self.client.retrieve_payment(payment_id)
+                self._remember_payment_status(
+                    payment_id, str(payment.get("status", ""))
+                )
+                payments.append(payment)
         return payments
 
     @staticmethod

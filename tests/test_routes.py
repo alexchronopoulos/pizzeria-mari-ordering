@@ -58,7 +58,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
     assert b"/static/style.css?v=0.18.16" in response.data
-    assert b"/static/app.js?v=0.18.16" in response.data
+    assert b"/static/app.js?v=0.18.21" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.20",
+        "version": "0.18.21",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
