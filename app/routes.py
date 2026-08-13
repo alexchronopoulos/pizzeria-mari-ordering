@@ -98,12 +98,8 @@ def _save_cart(lines: list[dict]) -> None:
     session.modified = True
 
 
-def _menu(*, allow_stale: bool = False, refresh: bool = False) -> MenuSnapshot:
+def _menu(*, allow_stale: bool = False) -> MenuSnapshot:
     provider = current_app.extensions["menu_provider"]
-    if refresh:
-        refresh_snapshot = getattr(provider, "refresh_snapshot", None)
-        if refresh_snapshot is not None:
-            return refresh_snapshot()
     if allow_stale:
         cached_snapshot = getattr(provider, "cached_snapshot", None)
         cached = cached_snapshot() if cached_snapshot else None
@@ -798,7 +794,7 @@ def checkout():
     lines = _cart()
     if not lines:
         return redirect(url_for("storefront.index"))
-    menu = _menu(refresh=request.method == "POST")
+    menu = _menu(allow_stale=request.method == "POST")
     items_by_id = menu.items_by_id
     availability_counts = (
         _pizza_counts(menu) if request.method == "GET" else None
@@ -811,19 +807,8 @@ def checkout():
     if not selected:
         return redirect(url_for("storefront.index"))
 
-    try:
-        validate_cart(
-            lines,
-            items_by_id,
-            current_app.config["CART_TOTAL_LIMIT"],
-            current_app.config["CATEGORY_LIMITS"],
-        )
-        cart_validation_error = None
-    except CartLimitError as exc:
-        cart_validation_error = str(exc)
-
     pricing = _pricing(lines, items_by_id)
-    error = session.pop("checkout_error", None) or cart_validation_error
+    error = session.pop("checkout_error", None)
     selected_tip = request.form.get("tip_choice", "15")
     custom_tip_value = request.form.get("custom_tip", "")
     payment_method = request.form.get("payment_method", "hosted")
@@ -1210,10 +1195,12 @@ def checkout_complete():
         result = commerce.checkout_result(str(pending["order_id"]))
     if result["status"] in {"CANCELED", "FAILED"}:
         session.pop("pending_square_checkout", None)
-        session["checkout_error"] = (
-            "Square did not complete that payment. Your cart is unchanged."
+        session.modified = True
+        return render_template(
+            "payment_failed.html",
+            selected=datetime.fromisoformat(pending["service_at"]),
+            payment_status=result["status"],
         )
-        return redirect(url_for("storefront.checkout"))
     if result["status"] != "COMPLETED":
         if payment_mode == "gift_card":
             return redirect(

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Payment Unsuccessful | Pizzeria Mari Order Online{% endblock %}
+
+{% block body %}
+<main class="confirmation-shell payment-failed-shell">
+  <section class="confirmation-card">
+    <span class="eyebrow">Payment unsuccessful</span>
+    <h1>Your order was not placed.</h1>
+    <p class="confirmation-time">Square did not complete the payment, and <strong>no completed charge was recorded</strong> for this checkout.</p>
+    <p>Your cart is still saved and your selected pickup remains <strong>{{ selected.strftime('%A, %B %-d at %-I:%M %p') }}</strong>.</p>
+    <p>Return to checkout to try again. If the same card is declined, try another payment method or contact your card issuer.</p>
+    <a class="button button-primary" href="{{ url_for('storefront.checkout') }}">Return to checkout</a>
+    <p class="payment-failure-note">Your bank may temporarily show a pending authorization even though Square did not complete the charge.</p>
+  </section>
+</main>
+{% endblock %}

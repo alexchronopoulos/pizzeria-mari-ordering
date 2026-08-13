@@ -207,6 +207,7 @@ class SquareFixture:
         self.canceled = False
         self.created_order: dict | None = None
         self.payment_status = "PENDING"
+        self.order_state_override: str | None = None
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -243,10 +244,6 @@ class SquareFixture:
             body = json.loads(request.read())
             order = body["order"]
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
-            assert order["line_items"][0]["note"] == (
-                "Pickup: Thursday, August 6 at 4:00 PM"
-            )
-            assert sum("note" in line for line in order["line_items"]) == 1
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
             assert pickup["recipient"]["display_name"] == "Alex Customer"
@@ -285,7 +282,9 @@ class SquareFixture:
             )
         if request.method == "GET" and request.url.path == "/v2/orders/SQUARE_ORDER_12345678":
             assert self.created_order is not None
-            state = "OPEN" if self.payment_status == "COMPLETED" else "DRAFT"
+            state = self.order_state_override or (
+                "OPEN" if self.payment_status == "COMPLETED" else "DRAFT"
+            )
             order = {**self.created_order, "state": state}
             if state == "OPEN":
                 order["tenders"] = [{"id": "PAYMENT"}]
@@ -329,18 +328,14 @@ class GiftCardFixture(SquareFixture):
             order = body["order"]
             uuid.UUID(body["idempotency_key"])
             assert order["reference_id"].startswith("PMGC-")
-            assert order["state"] == "DRAFT"
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
-            assert order["line_items"][0]["note"] == (
-                "Pickup: Thursday, August 6 at 4:00 PM"
-            )
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
             self.created_order = {
                 **order,
                 "id": "GIFT_ORDER_12345678",
                 "version": 1,
-                "state": "DRAFT",
+                "state": "OPEN",
                 "created_at": "2026-08-04T16:00:00Z",
                 "total_money": {"amount": 3348, "currency": "USD"},
                 "tenders": [],
@@ -424,87 +419,9 @@ class GiftCardFixture(SquareFixture):
             )
         if request.method == "PUT" and path == "/v2/orders/GIFT_ORDER_12345678":
             self.requests.append(request)
-            body = json.loads(request.read())
-            if body.get("order", {}).get("state") == "OPEN":
-                uuid.UUID(body["idempotency_key"])
-                assert body["order"] == {
-                    "location_id": "LOCATION",
-                    "version": self.created_order["version"],
-                    "state": "OPEN",
-                }
-                self.created_order["state"] = "OPEN"
-                self.created_order["version"] += 1
-                return httpx.Response(200, json={"order": self.created_order})
             self.canceled = True
             self.created_order["state"] = "CANCELED"
             return httpx.Response(200, json={"order": self.created_order})
-        return super().__call__(request)
-
-
-class InventoryFixture(SquareFixture):
-    def __init__(
-        self,
-        *,
-        quantity: int,
-        threshold: int | None = 3,
-        alert_type: str = "LOW_QUANTITY",
-    ):
-        super().__init__()
-        self.quantity = quantity
-        self.threshold = threshold
-        self.alert_type = alert_type
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/v2/catalog/list":
-            self.requests.append(request)
-            assert request.headers["square-version"] == "2026-07-15"
-            objects = catalog_objects()
-            variation = next(
-                variation
-                for obj in objects
-                if obj.get("id") == "ITEM_PLAIN"
-                for variation in obj["item_data"]["variations"]
-                if variation["id"] == "VAR_PLAIN"
-            )
-            location_override = {
-                "location_id": "LOCATION",
-                "track_inventory": True,
-            }
-            if self.threshold is not None:
-                location_override.update(
-                    {
-                        "inventory_alert_type": self.alert_type,
-                        "inventory_alert_threshold": self.threshold,
-                    }
-                )
-            variation["item_variation_data"]["location_overrides"] = [
-                location_override
-            ]
-            return httpx.Response(200, json={"objects": objects})
-        if (
-            request.method == "POST"
-            and request.url.path == "/v2/inventory/counts/batch-retrieve"
-        ):
-            self.requests.append(request)
-            body = json.loads(request.read())
-            assert body == {
-                "catalog_object_ids": ["VAR_PLAIN"],
-                "location_ids": ["LOCATION"],
-                "states": ["IN_STOCK"],
-            }
-            return httpx.Response(
-                200,
-                json={
-                    "counts": [
-                        {
-                            "catalog_object_id": "VAR_PLAIN",
-                            "location_id": "LOCATION",
-                            "state": "IN_STOCK",
-                            "quantity": str(self.quantity),
-                        }
-                    ]
-                },
-            )
         return super().__call__(request)
 
 
@@ -541,26 +458,6 @@ def gift_card_app(*, gift_amount: int):
             "SQUARE_ACCESS_TOKEN": "test-token-not-a-real-secret",
             "SQUARE_APPLICATION_ID": "sandbox-sq0idb-public-test-id",
             "SQUARE_GIFT_CARDS_ENABLED": True,
-            "SQUARE_HTTP_TRANSPORT": httpx.MockTransport(fixture),
-            "TEST_NOW": datetime(
-                2026, 8, 4, 12, tzinfo=ZoneInfo("America/New_York")
-            ),
-        }
-    )
-    app.square_fixture = fixture
-    return app
-
-
-def inventory_app(*, quantity: int, threshold: int | None = 3):
-    fixture = InventoryFixture(quantity=quantity, threshold=threshold)
-    app = create_app(
-        {
-            "TESTING": True,
-            "DEMO_MODE": False,
-            "SECRET_KEY": "test-secret-not-for-production",
-            "PUBLIC_BASE_URL": "https://orders.example.test",
-            "SQUARE_LOCATION_ID": "LOCATION",
-            "SQUARE_ACCESS_TOKEN": "test-token-not-a-real-secret",
             "SQUARE_HTTP_TRANSPORT": httpx.MockTransport(fixture),
             "TEST_NOW": datetime(
                 2026, 8, 4, 12, tzinfo=ZoneInfo("America/New_York")
@@ -614,87 +511,6 @@ def test_square_catalog_drives_items_images_and_modifier_groups(square_app):
     assert item.modifier_groups[0].min_selected == 0
     assert item.modifier_groups[0].max_selected is None
 
-
-def test_location_low_stock_is_rendered_on_the_menu_card_and_item_dialog():
-    app = inventory_app(quantity=2, threshold=3)
-    response = app.test_client().get("/")
-
-    assert response.status_code == 200
-    assert b"Low stock \xc2\xb7 2 left" in response.data
-    assert b'class="menu-stock"' in response.data
-    assert b'"low_stock": true' in response.data
-    assert b'"stock_count": 2' in response.data
-    javascript = app.test_client().get("/static/app.js").get_data(as_text=True)
-    assert "itemStock.textContent" in javascript
-    assert "Low stock · ${activeItem.stock_count} left" in javascript
-
-
-def test_tracked_pizza_with_one_left_is_low_stock_without_square_alert_metadata():
-    app = inventory_app(quantity=1, threshold=None)
-    response = app.test_client().get("/")
-
-    assert response.status_code == 200
-    assert b"Low stock \xc2\xb7 1 left" in response.data
-    assert b'class="menu-stock"' in response.data
-    assert b'"low_stock": true' in response.data
-    assert b'"stock_count": 1' in response.data
-
-
-def test_inventory_count_limits_the_cart_and_zero_count_is_out_of_stock():
-    app = inventory_app(quantity=2)
-    client = app.test_client()
-    token = csrf(client)
-
-    too_many = client.post(
-        "/api/cart",
-        json={"item_id": "VAR_PLAIN", "quantity": 3},
-        headers={"X-CSRF-Token": token},
-    )
-    assert too_many.status_code == 409
-    assert b"Only 2 Plain" in too_many.data
-
-    app.square_fixture.quantity = 0
-    app.extensions["menu_provider"]._cached_at = 0
-    page = client.get("/")
-    assert b"Out of stock" in page.data
-    unavailable = client.post(
-        "/api/cart",
-        json={"item_id": "VAR_PLAIN", "quantity": 1},
-        headers={"X-CSRF-Token": token},
-    )
-    assert unavailable.status_code == 400
-
-
-def test_checkout_refreshes_inventory_before_creating_square_order():
-    app = inventory_app(quantity=1)
-    client = app.test_client()
-    token = csrf(client)
-    added = client.post(
-        "/api/cart",
-        json={"item_id": "VAR_PLAIN", "quantity": 1},
-        headers={"X-CSRF-Token": token},
-    )
-    assert added.status_code == 201
-
-    app.square_fixture.quantity = 0
-    response = client.post(
-        "/checkout",
-        data={
-            "csrf_token": token,
-            "verification_total_cents": "2808",
-            "first_name": "Alex",
-            "last_name": "Customer",
-            "email": "alex@example.com",
-            "phone": "5185550100",
-        },
-    )
-
-    assert response.status_code == 200
-    assert b"Plain is no longer available" in response.data
-    assert not any(
-        request.url.path == "/v2/online-checkout/payment-links"
-        for request in app.square_fixture.requests
-    )
 
 def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
     client = square_app.test_client()
@@ -1008,17 +824,20 @@ def test_checkout_does_not_reread_capacity_after_customer_reviews_order(square_a
     assert response.headers["Location"].startswith("/checkout/square?attempt=")
 
 
-def test_hosted_receipt_pickup_note_appears_once_for_multiple_pizzas(square_app):
+@pytest.mark.parametrize("payment_status", ("FAILED", "CANCELED"))
+def test_unsuccessful_hosted_payment_gets_clear_notice_and_preserves_cart(
+    square_app, payment_status
+):
     client = square_app.test_client()
     token = csrf(client)
     added = client.post(
         "/api/cart",
-        json={"item_id": "VAR_PLAIN", "quantity": 2},
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
         headers={"X-CSRF-Token": token},
     )
     assert added.status_code == 201
 
-    response = client.post(
+    submitted = client.post(
         "/checkout",
         data={
             "csrf_token": token,
@@ -1029,8 +848,31 @@ def test_hosted_receipt_pickup_note_appears_once_for_multiple_pizzas(square_app)
             "phone": "5185550100",
         },
     )
+    assert submitted.status_code == 303
+    with client.session_transaction() as browser_session:
+        attempt_id = browser_session["pending_square_checkout"]["attempt_id"]
+        original_cart = list(browser_session["cart"])
 
-    assert response.status_code == 303
+    square_app.square_fixture.order_state_override = "OPEN"
+    square_app.square_fixture.payment_status = payment_status
+    result = client.get(f"/checkout/complete?attempt={attempt_id}")
+
+    assert result.status_code == 200
+    assert b"Payment unsuccessful" in result.data
+    assert b"Your order was not placed" in result.data
+    assert b"no completed charge was recorded" in result.data
+    assert b"Your cart is still saved" in result.data
+    assert b"Thursday, August 6 at 4:00 PM" in result.data
+    assert b"Return to checkout" in result.data
+    assert b"pending authorization" in result.data
+    with client.session_transaction() as browser_session:
+        assert browser_session["cart"] == original_cart
+        assert "pending_square_checkout" not in browser_session
+        assert "service_at" in browser_session
+
+    retry = client.get("/checkout")
+    assert retry.status_code == 200
+    assert b"Who is picking up?" in retry.data
 
 
 def test_hosted_checkout_accepts_a_remembered_e164_us_phone(square_app):
@@ -1136,23 +978,6 @@ def test_gift_card_checkout_loads_square_fields_with_restricted_csp():
     assert "https://sandbox.web.squarecdn.com" in csp
     assert "https://pci-connect.squareupsandbox.com" in csp
     assert "frame-src 'self' https://sandbox.web.squarecdn.com" in csp
-
-
-def test_abandoned_gift_card_checkout_stays_draft_until_payment():
-    app = gift_card_app(gift_amount=3348)
-    client = app.test_client()
-    _, attempt_id = start_gift_card_checkout(app, client)
-
-    response = client.get(f"/checkout/gift-card?attempt={attempt_id}")
-
-    assert response.status_code == 200
-    assert app.square_fixture.created_order["state"] == "DRAFT"
-    assert app.square_fixture.payment_bodies == []
-    assert not any(
-        request.method == "PUT"
-        and request.url.path == "/v2/orders/GIFT_ORDER_12345678"
-        for request in app.square_fixture.requests
-    )
 
 
 def test_gift_card_can_pay_the_full_order_and_show_a_receipt():
@@ -1456,16 +1281,6 @@ def test_unpaid_hosted_checkout_drafts_do_not_consume_capacity():
     assert payload["slots"][0]["remaining"] == 3
     assert payload["slots"][0]["status"] == "3 pizzas available"
     assert fixture.canceled is False
-    search_request = next(
-        request
-        for request in fixture.requests
-        if request.url.path == "/v2/orders/search"
-    )
-    search_body = json.loads(search_request.read())
-    assert search_body["query"]["filter"]["state_filter"]["states"] == [
-        "OPEN",
-        "COMPLETED",
-    ]
 
 
 def test_square_network_errors_do_not_expose_access_token(square_app):

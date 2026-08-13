@@ -28,9 +28,6 @@ SQUARE_BASE_URLS = {
 }
 CHECKOUT_REFERENCE_PREFIX = "PMOC-"
 GIFT_CARD_REFERENCE_PREFIX = "PMGC-"
-DEFAULT_PIZZA_LOW_STOCK_THRESHOLD = 3
-
-
 class SquareAPIError(RuntimeError):
     def __init__(
         self,
@@ -160,36 +157,6 @@ class SquareClient:
             json_body=request_body,
         )
 
-    def update_order(self, order_id: str, request_body: dict) -> dict:
-        return self.request(
-            "PUT",
-            f"/v2/orders/{order_id}",
-            json_body=request_body,
-        )
-
-    def batch_retrieve_inventory_counts(
-        self, *, catalog_object_ids: list[str], location_ids: list[str]
-    ) -> list[dict]:
-        counts: list[dict] = []
-        cursor = None
-        while True:
-            body = {
-                "catalog_object_ids": catalog_object_ids,
-                "location_ids": location_ids,
-                "states": ["IN_STOCK"],
-            }
-            if cursor:
-                body["cursor"] = cursor
-            payload = self.request(
-                "POST",
-                "/v2/inventory/counts/batch-retrieve",
-                json_body=body,
-            )
-            counts.extend(payload.get("counts", []))
-            cursor = payload.get("cursor")
-            if not cursor:
-                return counts
-
     def create_payment(self, request_body: dict) -> dict:
         return self.request(
             "POST",
@@ -223,7 +190,7 @@ class SquareClient:
                 "query": {
                     "filter": {
                         "state_filter": {
-                            "states": ["OPEN", "COMPLETED"]
+                            "states": ["DRAFT", "OPEN", "COMPLETED"]
                         },
                         "date_time_filter": {
                             "created_at": {
@@ -275,29 +242,6 @@ def _price_cents(data: dict, location_id: str) -> int | None:
 
 def _sold_out(data: dict, location_id: str) -> bool:
     return bool(_location_override(data, location_id).get("sold_out", False))
-
-
-def _inventory_tracked(data: dict, location_id: str) -> bool:
-    override = _location_override(data, location_id)
-    if "track_inventory" in override:
-        return bool(override["track_inventory"])
-    return bool(data.get("track_inventory", False))
-
-
-def _low_stock_threshold(data: dict, location_id: str) -> int | None:
-    override = _location_override(data, location_id)
-    alert_type = override.get(
-        "inventory_alert_type", data.get("inventory_alert_type")
-    )
-    threshold = override.get(
-        "inventory_alert_threshold", data.get("inventory_alert_threshold")
-    )
-    if alert_type != "LOW_QUANTITY" or threshold is None:
-        return None
-    try:
-        return int(threshold)
-    except (TypeError, ValueError):
-        return None
 
 
 def _category_ids(item_data: dict) -> list[str]:
@@ -398,61 +342,16 @@ class SquareCatalogProvider:
             now = time.monotonic()
             if self._cached and now - self._cached_at < self.cache_seconds:
                 return self._cached
-            snapshot = self._fresh_snapshot()
+            snapshot = self._build(self.client.list_catalog())
             self._cached = snapshot
             self._cached_at = now
-            return snapshot
-
-    def refresh_snapshot(self) -> MenuSnapshot:
-        """Refresh catalog and inventory for checkout revalidation."""
-        with self._lock:
-            snapshot = self._fresh_snapshot()
-            self._cached = snapshot
-            self._cached_at = time.monotonic()
             return snapshot
 
     def cached_snapshot(self) -> MenuSnapshot | None:
         """Return the menu already shown to this process without a network read."""
         return self._cached
 
-    def _fresh_snapshot(self) -> MenuSnapshot:
-        objects = self.client.list_catalog()
-        tracked_ids = sorted(
-            variation["id"]
-            for obj in objects
-            if obj.get("type") == "ITEM" and not obj.get("is_deleted", False)
-            for variation in obj.get("item_data", {}).get("variations", [])
-            if variation.get("id")
-            and not variation.get("is_deleted", False)
-            and _present_at_location(variation, self.location_id)
-            and _inventory_tracked(
-                variation.get("item_variation_data", {}), self.location_id
-            )
-        )
-        inventory_counts: dict[str, int] = {}
-        if tracked_ids:
-            counts = self.client.batch_retrieve_inventory_counts(
-                catalog_object_ids=tracked_ids,
-                location_ids=[self.location_id],
-            )
-            for count in counts:
-                if (
-                    count.get("location_id") != self.location_id
-                    or count.get("state") != "IN_STOCK"
-                    or count.get("catalog_object_id") not in tracked_ids
-                ):
-                    continue
-                try:
-                    quantity = int(Decimal(str(count.get("quantity", "0"))))
-                except (ArithmeticError, ValueError):
-                    quantity = 0
-                inventory_counts[count["catalog_object_id"]] = max(0, quantity)
-        return self._build(objects, inventory_counts)
-
-    def _build(
-        self, objects: list[dict], inventory_counts: dict[str, int] | None = None
-    ) -> MenuSnapshot:
-        inventory_counts = inventory_counts or {}
+    def _build(self, objects: list[dict]) -> MenuSnapshot:
         categories = {
             obj["id"]: obj
             for obj in objects
@@ -540,23 +439,6 @@ class SquareCatalogProvider:
                     (images.get(image_id) for image_id in item_data.get("image_ids", []) if images.get(image_id)),
                     None,
                 )
-                tracked = _inventory_tracked(variation_data, self.location_id)
-                stock_count = (
-                    inventory_counts.get(variation["id"], 0) if tracked else None
-                )
-                sold_out = _sold_out(variation_data, self.location_id)
-                configured_threshold = _low_stock_threshold(
-                    variation_data, self.location_id
-                )
-                low_stock_threshold = (
-                    configured_threshold
-                    if configured_threshold is not None
-                    else (
-                        DEFAULT_PIZZA_LOW_STOCK_THRESHOLD
-                        if category_name in self.pizza_category_names
-                        else None
-                    )
-                )
                 grouped[category_id].append(
                     MenuItem(
                         id=variation["id"],
@@ -572,21 +454,10 @@ class SquareCatalogProvider:
                         or "",
                         additions=additions,
                         modifier_groups=modifier_groups,
-                        available=(
-                            not sold_out
-                            and (stock_count is None or stock_count > 0)
-                        ),
+                        available=not _sold_out(variation_data, self.location_id),
                         image_url=image_url,
                         catalog_object_id=variation["id"],
                         catalog_version=variation.get("version"),
-                        stock_count=stock_count,
-                        low_stock=(
-                            not sold_out
-                            and stock_count is not None
-                            and stock_count > 0
-                            and low_stock_threshold is not None
-                            and stock_count <= low_stock_threshold
-                        ),
                     )
                 )
 
@@ -779,15 +650,23 @@ class SquareCommerce:
             state = order.get("state")
             if state not in {"OPEN", "COMPLETED"}:
                 continue
+            reference_id = str(order.get("reference_id", ""))
             if (
                 state == "OPEN"
-                and str(order.get("reference_id", "")).startswith(
-                    GIFT_CARD_REFERENCE_PREFIX
-                )
+                and reference_id.startswith(GIFT_CARD_REFERENCE_PREFIX)
             ):
                 # App-created gift-card orders become COMPLETED when PayOrder
                 # succeeds. Ignore unfinished orders just as we ignore hosted
                 # checkout drafts; only paid orders consume displayed capacity.
+                continue
+            if (
+                state == "OPEN"
+                and reference_id.startswith(CHECKOUT_REFERENCE_PREFIX)
+                and not self._hosted_checkout_is_paid(order)
+            ):
+                # Online Checkout can leave an OPEN order and tender behind
+                # after a card is declined. A Payment ID is not proof of a
+                # sale: only a COMPLETED payment may reserve pizza capacity.
                 continue
             pickup_at = None
             for fulfillment in order.get("fulfillments", []):
@@ -810,6 +689,16 @@ class SquareCommerce:
                         continue
             counts[slot] = counts.get(slot, 0) + pizzas
         return counts
+
+    def _hosted_checkout_is_paid(self, order: dict) -> bool:
+        for tender in order.get("tenders", []):
+            payment_id = self._payment_id(tender)
+            if not payment_id:
+                continue
+            payment = self.client.retrieve_payment(payment_id)
+            if payment.get("status") == "COMPLETED":
+                return True
+        return False
 
     @staticmethod
     def _order_line_items(lines: list[dict], items_by_id: dict[str, MenuItem]) -> list[dict]:
@@ -874,10 +763,6 @@ class SquareCommerce:
             }
             if notes:
                 pickup_details["note"] = notes
-            if order["line_items"]:
-                order["line_items"][0]["note"] = (
-                    f"Pickup: {service_at.strftime('%A, %B %-d at %-I:%M %p')}"
-                )
             order["fulfillments"] = [
                 {
                     "type": "PICKUP",
@@ -971,19 +856,17 @@ class SquareCommerce:
         reference = (
             f"{GIFT_CARD_REFERENCE_PREFIX}{attempt_id.replace('-', '')}"[:40]
         )
-        order = self.order_payload(
-            lines=lines,
-            items_by_id=items_by_id,
-            service_at=service_at,
-            customer=customer,
-            notes=notes,
-            reference_id=reference,
-        )
-        order["state"] = "DRAFT"
         payload = self.client.create_order(
             {
                 "idempotency_key": str(uuid.uuid4()),
-                "order": order,
+                "order": self.order_payload(
+                    lines=lines,
+                    items_by_id=items_by_id,
+                    service_at=service_at,
+                    customer=customer,
+                    notes=notes,
+                    reference_id=reference,
+                ),
             }
         )
         order = payload.get("order")
@@ -1017,6 +900,8 @@ class SquareCommerce:
             status = "COMPLETED"
         elif any(item.get("status") == "FAILED" for item in payments):
             status = "FAILED"
+        elif any(item.get("status") == "CANCELED" for item in payments):
+            status = "CANCELED"
         else:
             status = "PENDING"
         return {
@@ -1109,24 +994,6 @@ class SquareCommerce:
             raise SquareAPIError("A gift card has already been applied to this order.")
         if payment_method == "card" and not state["gift_card_applied"]:
             raise SquareAPIError("Apply a Square gift card before paying the remainder by card.")
-        if order.get("state") == "DRAFT":
-            payload = self.client.update_order(
-                order_id,
-                {
-                    "idempotency_key": str(uuid.uuid4()),
-                    "order": {
-                        "location_id": self.location_id,
-                        "version": order["version"],
-                        "state": "OPEN",
-                    },
-                },
-            )
-            order = payload.get("order")
-            if not order or order.get("state") != "OPEN":
-                raise SquareAPIError(
-                    "Square could not open that gift-card order. Please try again."
-                )
-            state = {**state, "order": order}
         request_body = {
             "source_id": source_id,
             "idempotency_key": str(uuid.uuid4()),

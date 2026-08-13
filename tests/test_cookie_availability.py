@@ -81,7 +81,7 @@ def test_cookie_is_hidden_for_thursday_and_script_tracks_date_changes(app):
     )
     assert cookie_button is not None
     assert " hidden" in cookie_button.group(0)
-    assert "/static/cookie-availability.js?v=0.18.18" in page
+    assert "/static/cookie-availability.js?v=0.18.20" in page
 
     javascript = client.get("/static/cookie-availability.js").get_data(as_text=True)
     assert "weekday === 5 || weekday === 6 || weekday === 0" in javascript

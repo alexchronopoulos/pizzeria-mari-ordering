@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.18",
+        "version": "0.18.20",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
