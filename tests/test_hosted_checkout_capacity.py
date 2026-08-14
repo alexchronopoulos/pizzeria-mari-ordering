@@ -28,6 +28,7 @@ def order(
     state: str = "OPEN",
     payment_id: str | None = None,
     quantity: int = 1,
+    fulfillment_state: str = "PROPOSED",
 ) -> dict:
     result = {
         "id": order_id,
@@ -36,6 +37,7 @@ def order(
         "fulfillments": [
             {
                 "type": "PICKUP",
+                "state": fulfillment_state,
                 "pickup_details": {"pickup_at": "2026-08-13T17:15:00-04:00"},
             }
         ],
@@ -102,7 +104,7 @@ def test_failed_hosted_checkout_orders_do_not_reserve_capacity():
     ]
 
 
-def test_completed_pmoc_order_counts_even_while_fulfillment_is_open():
+def test_paid_open_pmoc_order_reserves_capacity():
     client = CapacityClient(
         orders=[
             order(
@@ -132,3 +134,71 @@ def test_completed_pmoc_order_counts_even_while_fulfillment_is_open():
     )
 
     assert counts == {"2026-08-13T17:15:00-04:00": 3}
+
+
+def test_square_completed_order_releases_pickup_capacity():
+    client = CapacityClient(
+        orders=[
+            order(
+                "COMPLETED_CHECKOUT",
+                reference_id="PMOC-completed",
+                state="COMPLETED",
+                payment_id="COMPLETED_PAYMENT",
+                quantity=3,
+            )
+        ],
+        payments={
+            "COMPLETED_PAYMENT": {
+                "id": "COMPLETED_PAYMENT",
+                "status": "COMPLETED",
+            }
+        },
+    )
+    commerce = SquareCommerce(
+        client=client,
+        location_id="LOCATION",
+        timezone_name="America/New_York",
+        availability_cache_seconds=0,
+    )
+
+    counts = commerce.pizza_counts_by_slot(
+        variation_ids={"PIZZA_VARIATION"},
+        now=datetime(2026, 8, 13, 12, tzinfo=ZoneInfo("America/New_York")),
+    )
+
+    assert counts == {}
+    assert client.retrieved_payment_ids == []
+
+
+def test_paid_gift_card_order_reserves_until_pickup_is_completed():
+    client = CapacityClient(
+        orders=[
+            order(
+                "PAID_GIFT_ORDER",
+                reference_id="PMGC-paid",
+                state="COMPLETED",
+                quantity=2,
+            ),
+            order(
+                "FULFILLED_GIFT_ORDER",
+                reference_id="PMGC-fulfilled",
+                state="COMPLETED",
+                quantity=3,
+                fulfillment_state="COMPLETED",
+            ),
+        ],
+        payments={},
+    )
+    commerce = SquareCommerce(
+        client=client,
+        location_id="LOCATION",
+        timezone_name="America/New_York",
+        availability_cache_seconds=0,
+    )
+
+    counts = commerce.pizza_counts_by_slot(
+        variation_ids={"PIZZA_VARIATION"},
+        now=datetime(2026, 8, 13, 12, tzinfo=ZoneInfo("America/New_York")),
+    )
+
+    assert counts == {"2026-08-13T17:15:00-04:00": 2}

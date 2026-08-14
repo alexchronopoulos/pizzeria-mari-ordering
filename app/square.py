@@ -684,6 +684,15 @@ class SquareCommerce:
                 continue
             reference_id = str(order.get("reference_id", ""))
             if (
+                state == "COMPLETED"
+                and not reference_id.startswith(GIFT_CARD_REFERENCE_PREFIX)
+            ):
+                # Square keeps merchant-completed orders searchable. They no
+                # longer reserve pickup capacity. Gift-card checkouts are the
+                # exception: PayOrder marks them COMPLETED as soon as payment
+                # succeeds, before the pickup fulfillment is completed.
+                continue
+            if (
                 state == "OPEN"
                 and reference_id.startswith(GIFT_CARD_REFERENCE_PREFIX)
             ):
@@ -704,6 +713,11 @@ class SquareCommerce:
             pickup_at = None
             for fulfillment in order.get("fulfillments", []):
                 if fulfillment.get("type") == "PICKUP":
+                    if fulfillment.get("state") == "COMPLETED":
+                        # A paid gift-card order remains in Square's COMPLETED
+                        # order state throughout its lifecycle; the fulfillment
+                        # state is what releases its slot after pickup.
+                        break
                     pickup_at = fulfillment.get("pickup_details", {}).get("pickup_at")
                     if pickup_at:
                         break

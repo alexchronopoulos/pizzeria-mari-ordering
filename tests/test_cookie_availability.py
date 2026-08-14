@@ -82,7 +82,7 @@ def test_cookie_is_hidden_for_thursday_and_script_tracks_date_changes(app):
     assert response.status_code == 200
     assert cookie_button is not None
     assert " hidden" in cookie_button.group(0)
-    assert "/static/cookie-availability.js?v=0.18.23" in page
+    assert "/static/cookie-availability.js?v=0.18.26" in page
 
 
 @pytest.mark.parametrize(
