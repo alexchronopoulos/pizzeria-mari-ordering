@@ -799,6 +799,7 @@ def checkout():
     availability_counts = (
         _pizza_counts(menu) if request.method == "GET" else None
     )
+    saved_service_at = session.get("service_at")
     selected = _selected_slot(
         menu,
         refresh_availability=request.method == "GET",
@@ -809,6 +810,15 @@ def checkout():
 
     pricing = _pricing(lines, items_by_id)
     error = session.pop("checkout_error", None)
+    if (
+        request.method == "POST"
+        and isinstance(saved_service_at, str)
+        and selected.isoformat() != saved_service_at
+    ):
+        error = (
+            "Your pickup time is no longer available. Please review the "
+            "updated pickup time and submit again."
+        )
     selected_tip = request.form.get("tip_choice", "15")
     custom_tip_value = request.form.get("custom_tip", "")
     payment_method = request.form.get("payment_method", "hosted")

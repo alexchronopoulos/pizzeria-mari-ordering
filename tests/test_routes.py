@@ -58,7 +58,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
     assert b"/static/style.css?v=0.18.16" in response.data
-    assert b"/static/app.js?v=0.18.26" in response.data
+    assert b"/static/app.js?v=0.18.27" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -81,7 +81,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.26",
+        "version": "0.18.27",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -217,6 +217,27 @@ def test_date_pickup_schedule_override_wins_over_weekday(app):
         ("6:00 PM", 3),
         ("6:15 PM", 3),
     ]
+
+
+def test_pickup_api_rejects_a_slot_after_its_fifteen_minute_cutoff(app):
+    app.config["TEST_NOW"] = datetime(
+        2026, 8, 6, 19, 0, 1, tzinfo=ZoneInfo("America/New_York")
+    )
+    client = app.test_client()
+    token = csrf(client)
+
+    payload = client.get("/api/slots?date=2026-08-06").get_json()
+    assert payload["slots"][0]["time"] == "7:30 PM"
+
+    rejected = client.post(
+        "/api/selected-slot",
+        json={"service_at": "2026-08-06T19:15:00-04:00"},
+        headers={"X-CSRF-Token": token},
+    )
+    assert rejected.status_code == 400
+    assert rejected.get_json()["error"] == (
+        "That pickup time is no longer available."
+    )
 
 
 def test_brand_typography_uses_compagnon_for_display_and_semplicita_for_body(app):
@@ -564,6 +585,40 @@ def test_checkout_requires_first_last_email_and_phone(app):
     )
     assert missing_phone.status_code == 200
     assert b"Enter a valid US phone number (10 digits or +1)." in missing_phone.data
+
+
+def test_checkout_requires_confirmation_when_saved_pickup_reaches_cutoff(app):
+    zone = ZoneInfo("America/New_York")
+    app.config["TEST_NOW"] = datetime(2026, 8, 6, 18, 59, tzinfo=zone)
+    client = app.test_client()
+    token = csrf(client)
+    added = client.post(
+        "/api/cart",
+        json={"item_id": "plain", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    assert added.status_code == 201
+    with client.session_transaction() as browser_session:
+        assert browser_session["service_at"] == "2026-08-06T19:15:00-04:00"
+
+    app.config["TEST_NOW"] = datetime(2026, 8, 6, 19, 0, 1, tzinfo=zone)
+    response = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+
+    assert response.status_code == 200
+    assert b"Your pickup time is no longer available." in response.data
+    assert b"Please review the updated pickup time and submit again." in response.data
+    assert b"Thursday, August 6" in response.data
+    assert b"7:30 PM" in response.data
+    assert b"Thanks, Alex Customer." not in response.data
 
 
 def test_custom_tip_is_included_in_confirmed_total(app):

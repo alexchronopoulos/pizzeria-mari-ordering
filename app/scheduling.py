@@ -26,6 +26,7 @@ class PickupSlot:
 
 PickupWindow = tuple[str, str, int]
 PickupSchedule = dict[str, tuple[PickupWindow, ...]]
+PICKUP_LEAD_TIME = timedelta(minutes=15)
 
 
 def _schedule_time(value: object, field: str, interval_minutes: int) -> time:
@@ -202,6 +203,7 @@ def pickup_slots_for_date(
 ) -> list[PickupSlot]:
     zone = ZoneInfo(timezone)
     local_now = now.astimezone(zone) if now else datetime.now(zone)
+    first_available_at = local_now + PICKUP_LEAD_TIME
     slots: list[PickupSlot] = []
     for start_value, end_value, capacity in _windows_for_date(
         service_date, service_hours, schedule, default_capacity
@@ -210,7 +212,7 @@ def pickup_slots_for_date(
         end = datetime.combine(service_date, time.fromisoformat(end_value), zone)
         cursor = start
         while cursor <= end:
-            if cursor > local_now:
+            if cursor >= first_available_at:
                 slots.append(PickupSlot(cursor, capacity))
             cursor += timedelta(minutes=interval_minutes)
     return sorted(slots, key=lambda slot: slot.at)
@@ -278,12 +280,13 @@ def slots_for_date(
 
     zone = ZoneInfo(timezone)
     local_now = now.astimezone(zone) if now else datetime.now(zone)
+    first_available_at = local_now + PICKUP_LEAD_TIME
     start = datetime.combine(service_date, time.fromisoformat(hours[0]), zone)
     end = datetime.combine(service_date, time.fromisoformat(hours[1]), zone)
     slots: list[datetime] = []
     cursor = start
     while cursor <= end:
-        if cursor > local_now:
+        if cursor >= first_available_at:
             slots.append(cursor)
         cursor += timedelta(minutes=interval_minutes)
     return slots

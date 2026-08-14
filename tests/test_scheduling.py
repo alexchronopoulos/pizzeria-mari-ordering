@@ -40,6 +40,31 @@ def test_thursday_has_fifteen_minute_slots_through_closing_time():
     assert slots[-1].strftime("%H:%M") == "20:00"
 
 
+def test_same_day_pickup_requires_a_full_fifteen_minutes_notice():
+    zone = ZoneInfo("America/New_York")
+    exactly_fifteen_minutes = pickup_slots_for_date(
+        date(2026, 8, 6),
+        HOURS,
+        {},
+        3,
+        "America/New_York",
+        15,
+        datetime(2026, 8, 6, 19, 0, tzinfo=zone),
+    )
+    after_cutoff = pickup_slots_for_date(
+        date(2026, 8, 6),
+        HOURS,
+        {},
+        3,
+        "America/New_York",
+        15,
+        datetime(2026, 8, 6, 19, 0, 1, tzinfo=zone),
+    )
+
+    assert exactly_fifteen_minutes[0].at.strftime("%H:%M") == "19:15"
+    assert after_cutoff[0].at.strftime("%H:%M") == "19:30"
+
+
 def test_pickup_schedule_sets_weekday_windows_and_per_slot_capacity():
     now = datetime(2026, 8, 4, 12, tzinfo=ZoneInfo("America/New_York"))
     schedule = parse_pickup_schedule(
