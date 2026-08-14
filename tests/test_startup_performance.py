@@ -92,3 +92,16 @@ def test_stale_menu_returns_immediately_and_refreshes_in_background():
     assert returned is first
     assert provider.catalog_requests == 2
     assert provider.cached_snapshot().version == 2
+
+
+def test_fresh_warmed_menu_does_not_read_square_again_for_page_load():
+    provider = FakeProvider()
+    warmed = provider.snapshot()
+    wrapper = StaleWhileRevalidateMenuProvider(
+        provider, Flask(__name__).logger
+    )
+
+    returned = wrapper.snapshot()
+
+    assert returned is warmed
+    assert provider.catalog_requests == 1

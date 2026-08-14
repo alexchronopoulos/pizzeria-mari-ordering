@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.16 capabilities
+## Current v0.18.30 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -16,7 +16,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Checkout collects required first name, last name, email, and phone fields with optional order notes.
 - Buyers can opt to remember those four contact fields in their current browser for faster future checkout; the data is never stored by the server.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
-- Square inventory-aware availability. Tracked pizzas at three remaining or fewer show a visible `Low stock · 2 left` badge even when Square omits alert metadata; an explicit Square low-stock threshold takes precedence. The remaining quantity is enforced in the cart and rechecked before checkout.
+- Square inventory-aware availability. Every menu item with a positive Square inventory count of one through four shows a visible `Low stock · 2 left` badge on its card and item dialog, even if Square omits the catalog tracking flag. An explicitly tracked zero count is unavailable, while five or more has no warning. The remaining quantity is enforced in the cart and rechecked before checkout.
 - Large square menu photography with a pizza-centered focal crop and no image border; the complete item card has a border. Item details show a larger uncropped image above the item name.
 - One compact Additions picker whose visible options come from Square's Whole Pie Additions list. Whole, first-half, and second-half choices resolve to the matching option and price in their respective Square lists.
 - Every other customer-facing modifier list attached to an item is rendered and validated automatically, including Square's inherited/unlimited selection rules.

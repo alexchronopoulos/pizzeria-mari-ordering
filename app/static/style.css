@@ -168,16 +168,20 @@ a { color: inherit; }
 .menu-card-copy > span:not(.price) { display: -webkit-box; overflow: hidden; margin-top: 7px; color: #454545; font-size: .88rem; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .menu-card-copy .price { padding-top: 10px; font-weight: 800; }
 .menu-card-copy em { color: var(--red); font-size: .8rem; font-style: normal; font-weight: 800; }
-.menu-card-copy .menu-stock {
+.menu-stock {
   width: max-content;
-  margin-top: 9px;
   padding: 4px 7px;
   color: var(--paper);
   background: var(--red);
   border: 1px solid var(--ink);
+  font-size: .8rem;
+  font-style: normal;
+  font-weight: 800;
   letter-spacing: .02em;
   text-transform: uppercase;
 }
+.menu-card-copy em.menu-stock { margin-top: 9px; color: var(--paper); }
+.item-stock { margin: 0 22px 20px; }
 .menu-photo {
   display: block;
   width: 100%;

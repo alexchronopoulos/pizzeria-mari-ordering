@@ -47,8 +47,12 @@ class StaleWhileRevalidateMenuProvider:
 
     def _refresh(self) -> None:
         try:
-            objects = self._provider.client.list_catalog()
-            snapshot = self._provider._build(objects)
+            fresh_snapshot = getattr(self._provider, "fresh_snapshot", None)
+            if callable(fresh_snapshot):
+                snapshot = fresh_snapshot()
+            else:
+                objects = self._provider.client.list_catalog()
+                snapshot = self._provider._build(objects)
             with self._provider._lock:
                 self._provider._cached = snapshot
                 self._provider._cached_at = time.monotonic()

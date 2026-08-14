@@ -220,6 +220,11 @@
       document.querySelector('#item-category').textContent = activeItem.category_label;
       document.querySelector('#item-name').textContent = activeItem.name;
       document.querySelector('#item-description').textContent = activeItem.description;
+      const itemStock = document.querySelector('#item-stock');
+      itemStock.textContent = activeItem.low_stock
+        ? `Low stock · ${activeItem.stock_count} left`
+        : '';
+      itemStock.hidden = !activeItem.low_stock;
       const itemArt = document.querySelector('#item-art');
       itemArt.className = activeItem.image_url
         ? 'pizza-art item-photo'

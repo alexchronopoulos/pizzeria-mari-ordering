@@ -6,7 +6,8 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -28,6 +29,9 @@ SQUARE_BASE_URLS = {
 }
 CHECKOUT_REFERENCE_PREFIX = "PMOC-"
 GIFT_CARD_REFERENCE_PREFIX = "PMGC-"
+LOW_STOCK_THRESHOLD = 5
+
+
 class SquareAPIError(RuntimeError):
     def __init__(
         self,
@@ -125,7 +129,7 @@ class SquareClient:
         cursor = None
         while True:
             params = {
-                "types": "ITEM,CATEGORY,MODIFIER_LIST,IMAGE",
+                "types": "ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,IMAGE",
                 "include_deleted_objects": "true",
             }
             if cursor:
@@ -135,6 +139,49 @@ class SquareClient:
             cursor = payload.get("cursor")
             if not cursor:
                 return objects
+
+    def inventory_counts(
+        self,
+        *,
+        catalog_object_ids: list[str],
+        location_id: str,
+    ) -> dict[str, int]:
+        """Return current in-stock quantities for tracked item variations."""
+        requested_ids = list(dict.fromkeys(catalog_object_ids))
+        if not requested_ids:
+            return {}
+
+        quantities: dict[str, int] = {}
+        cursor = None
+        while True:
+            body: dict[str, Any] = {
+                "catalog_object_ids": requested_ids,
+                "location_ids": [location_id],
+                "states": ["IN_STOCK"],
+            }
+            if cursor:
+                body["cursor"] = cursor
+            payload = self.request(
+                "POST",
+                "/v2/inventory/counts/batch-retrieve",
+                json_body=body,
+            )
+            for count in payload.get("counts", []):
+                object_id = count.get("catalog_object_id")
+                if (
+                    object_id not in requested_ids
+                    or count.get("location_id") != location_id
+                    or count.get("state") != "IN_STOCK"
+                ):
+                    continue
+                try:
+                    quantity = int(Decimal(str(count.get("quantity", "0"))))
+                except (InvalidOperation, TypeError, ValueError):
+                    continue
+                quantities[object_id] = max(0, quantity)
+            cursor = payload.get("cursor")
+            if not cursor:
+                return quantities
 
     def calculate_order(self, order: dict) -> dict:
         payload = self.request(
@@ -266,6 +313,13 @@ def _sold_out(data: dict, location_id: str) -> bool:
     return bool(_location_override(data, location_id).get("sold_out", False))
 
 
+def _tracks_inventory(data: dict, location_id: str) -> bool:
+    override = _location_override(data, location_id)
+    if "track_inventory" in override:
+        return bool(override["track_inventory"])
+    return bool(data.get("track_inventory", False))
+
+
 def _category_ids(item_data: dict) -> list[str]:
     ids = [entry.get("id") for entry in item_data.get("categories", [])]
     if item_data.get("category_id"):
@@ -343,6 +397,7 @@ class SquareCatalogProvider:
         pizza_category_names: tuple[str, ...],
         excluded_modifier_list_names: tuple[str, ...] = (),
         cache_seconds: int = 30,
+        logger: Any | None = None,
     ) -> None:
         self.client = client
         self.location_id = location_id
@@ -352,8 +407,10 @@ class SquareCatalogProvider:
             _normalized_name(name) for name in excluded_modifier_list_names
         }
         self.cache_seconds = cache_seconds
+        self.logger = logger
         self._cached: MenuSnapshot | None = None
         self._cached_at = 0.0
+        self._inventory_counts: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def snapshot(self) -> MenuSnapshot:
@@ -364,7 +421,7 @@ class SquareCatalogProvider:
             now = time.monotonic()
             if self._cached and now - self._cached_at < self.cache_seconds:
                 return self._cached
-            snapshot = self._build(self.client.list_catalog())
+            snapshot = self.fresh_snapshot()
             self._cached = snapshot
             self._cached_at = now
             return snapshot
@@ -373,7 +430,145 @@ class SquareCatalogProvider:
         """Return the menu already shown to this process without a network read."""
         return self._cached
 
-    def _build(self, objects: list[dict]) -> MenuSnapshot:
+    def fresh_snapshot(self) -> MenuSnapshot:
+        """Read Square's catalog and inventory and build one consistent menu."""
+        objects = self.client.list_catalog()
+        inventory_variations, inventory_aliases = (
+            self._menu_inventory_variations(objects)
+        )
+        inventory_ids = list(
+            dict.fromkeys(
+                (
+                    *inventory_variations,
+                    *(
+                        alias_id
+                        for alias_ids in inventory_aliases.values()
+                        for alias_id in alias_ids
+                    ),
+                )
+            )
+        )
+        inventory_counts = {
+            object_id: quantity
+            for object_id, quantity in self._inventory_counts.items()
+            if object_id in inventory_variations
+        }
+        try:
+            retrieved_counts = self.client.inventory_counts(
+                catalog_object_ids=inventory_ids,
+                location_id=self.location_id,
+            )
+        except SquareAPIError:
+            if self.logger:
+                self.logger.warning(
+                    "Square inventory refresh failed; keeping the last known "
+                    "inventory while the catalog remains available.",
+                    exc_info=True,
+                )
+        else:
+            # Square can omit the catalog tracking flag even while a variation
+            # has a positive inventory count. Positive counts are authoritative
+            # for low-stock display. A zero count is used only when catalog
+            # tracking is explicitly enabled, so untracked menu items are not
+            # accidentally made unavailable.
+            inventory_counts = {}
+            for object_id, tracks_inventory in inventory_variations.items():
+                quantity = retrieved_counts.get(object_id)
+                if quantity is None:
+                    alias_quantities = [
+                        retrieved_counts[alias_id]
+                        for alias_id in inventory_aliases.get(object_id, ())
+                        if retrieved_counts.get(alias_id, 0) > 0
+                    ]
+                    if len(alias_quantities) == 1:
+                        quantity = alias_quantities[0]
+                if quantity is not None and (
+                    quantity > 0 or tracks_inventory
+                ):
+                    inventory_counts[object_id] = quantity
+            self._inventory_counts = inventory_counts
+        return self._build(objects, inventory_counts=inventory_counts)
+
+    def _menu_inventory_variations(
+        self, objects: list[dict]
+    ) -> tuple[dict[str, bool], dict[str, tuple[str, ...]]]:
+        variation_ids_by_item: dict[str, list[str]] = {}
+        for catalog_object in objects:
+            if catalog_object.get("type") != "ITEM_VARIATION":
+                continue
+            item_id = catalog_object.get("item_variation_data", {}).get(
+                "item_id"
+            )
+            if item_id and catalog_object.get("id"):
+                variation_ids_by_item.setdefault(item_id, []).append(
+                    catalog_object["id"]
+                )
+        allowed_category_ids = {
+            obj["id"]
+            for obj in objects
+            if obj.get("type") == "CATEGORY"
+            and not obj.get("is_deleted", False)
+            and obj.get("category_data", {}).get("name")
+            in self.allowed_category_names
+        }
+        variations: dict[str, bool] = {}
+        aliases: dict[str, tuple[str, ...]] = {}
+        for item_object in objects:
+            if item_object.get("type") != "ITEM":
+                continue
+            item_data = item_object.get("item_data", {})
+            if (
+                not set(_category_ids(item_data)).intersection(allowed_category_ids)
+                or item_object.get("is_deleted", False)
+                or item_data.get("is_archived")
+                or not _present_at_location(item_object, self.location_id)
+            ):
+                continue
+            all_inventory_ids = tuple(
+                dict.fromkeys(
+                    (
+                        item_object["id"],
+                        *(
+                            variation["id"]
+                            for variation in item_data.get("variations", [])
+                            if variation.get("id")
+                        ),
+                        *variation_ids_by_item.get(item_object["id"], []),
+                    )
+                )
+            )
+            displayed_ids: list[str] = []
+            for variation in item_data.get("variations", []):
+                variation_data = variation.get("item_variation_data", {})
+                if (
+                    not variation.get("id")
+                    or variation.get("is_deleted", False)
+                    or not _present_at_location(variation, self.location_id)
+                    or variation_data.get("sellable") is False
+                    or _price_cents(variation_data, self.location_id) is None
+                ):
+                    continue
+                variations[variation["id"]] = _tracks_inventory(
+                    variation_data,
+                    self.location_id,
+                )
+                displayed_ids.append(variation["id"])
+            if len(displayed_ids) == 1:
+                displayed_id = displayed_ids[0]
+                aliases[displayed_id] = tuple(
+                    object_id
+                    for object_id in all_inventory_ids
+                    if object_id != displayed_id
+                )
+        return variations, aliases
+
+    def _build(
+        self,
+        objects: list[dict],
+        *,
+        inventory_counts: dict[str, int] | None = None,
+    ) -> MenuSnapshot:
+        inventory_counts = inventory_counts or {}
         categories = {
             obj["id"]: obj
             for obj in objects
@@ -450,6 +645,7 @@ class SquareCatalogProvider:
                 price_cents = _price_cents(variation_data, self.location_id)
                 if price_cents is None or variation_data.get("sellable") is False:
                     continue
+                stock_count = inventory_counts.get(variation["id"])
                 variation_name = variation_data.get("name", "").strip()
                 item_name = item_data.get("name", "Unnamed item").strip()
                 name = (
@@ -476,10 +672,18 @@ class SquareCatalogProvider:
                         or "",
                         additions=additions,
                         modifier_groups=modifier_groups,
-                        available=not _sold_out(variation_data, self.location_id),
+                        available=(
+                            not _sold_out(variation_data, self.location_id)
+                            and (stock_count is None or stock_count > 0)
+                        ),
                         image_url=image_url,
                         catalog_object_id=variation["id"],
                         catalog_version=variation.get("version"),
+                        stock_count=stock_count,
+                        low_stock=(
+                            stock_count is not None
+                            and 0 < stock_count < LOW_STOCK_THRESHOLD
+                        ),
                     )
                 )
 

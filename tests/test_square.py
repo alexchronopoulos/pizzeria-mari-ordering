@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -10,6 +11,7 @@ import pytest
 
 from app import create_app
 from app.square import SquareAPIError
+from app.startup_performance import prepare_app_for_serving
 
 
 def catalog_objects() -> list[dict]:
@@ -208,12 +210,99 @@ class SquareFixture:
         self.created_order: dict | None = None
         self.payment_status = "PENDING"
         self.order_state_override: str | None = None
+        self.inventory_counts: dict[str, int] = {}
+        self.unflagged_inventory_ids: set[str] = set()
+        self.inventory_aliases: dict[str, str] = {}
+        self.inventory_error = False
+
+    def _catalog_objects(self) -> list[dict]:
+        objects = catalog_objects()
+        for displayed_id, alias_id in self.inventory_aliases.items():
+            for catalog_object in objects:
+                variations = catalog_object.get("item_data", {}).get(
+                    "variations", []
+                )
+                displayed = next(
+                    (
+                        variation
+                        for variation in variations
+                        if variation.get("id") == displayed_id
+                    ),
+                    None,
+                )
+                if displayed is None:
+                    continue
+                alias = json.loads(json.dumps(displayed))
+                alias["id"] = alias_id
+                alias["type"] = "ITEM_VARIATION"
+                alias["present_at_all_locations"] = False
+                alias["absent_at_location_ids"] = ["LOCATION"]
+                alias_data = alias.setdefault("item_variation_data", {})
+                alias_data["item_id"] = catalog_object["id"]
+                alias_data["name"] = "Secondary inventory variation"
+                objects.append(alias)
+                break
+        return objects
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         assert request.headers["square-version"] == "2026-07-15"
         if request.method == "GET" and request.url.path == "/v2/catalog/list":
-            return httpx.Response(200, json={"objects": catalog_objects()})
+            assert "ITEM_VARIATION" in request.url.params["types"].split(",")
+            objects = self._catalog_objects()
+            for catalog_object in objects:
+                for variation in catalog_object.get("item_data", {}).get(
+                    "variations", []
+                ):
+                    if (
+                        variation.get("id") in self.inventory_counts
+                        and variation.get("id")
+                        not in self.unflagged_inventory_ids
+                    ):
+                        variation.setdefault("item_variation_data", {})[
+                            "track_inventory"
+                        ] = True
+            return httpx.Response(200, json={"objects": objects})
+        if (
+            request.method == "POST"
+            and request.url.path == "/v2/inventory/counts/batch-retrieve"
+        ):
+            if self.inventory_error:
+                return httpx.Response(
+                    503,
+                    json={"errors": [{"code": "SERVICE_UNAVAILABLE"}]},
+                )
+            body = json.loads(request.read())
+            assert body["location_ids"] == ["LOCATION"]
+            assert body["states"] == ["IN_STOCK"]
+            objects = self._catalog_objects()
+            expected_ids = {
+                catalog_object["id"]
+                for catalog_object in objects
+                if catalog_object.get("type") in {"ITEM", "ITEM_VARIATION"}
+            }
+            expected_ids.update(
+                variation["id"]
+                for catalog_object in objects
+                for variation in catalog_object.get("item_data", {}).get(
+                    "variations", []
+                )
+            )
+            assert set(body["catalog_object_ids"]) == expected_ids
+            return httpx.Response(
+                200,
+                json={
+                    "counts": [
+                        {
+                            "catalog_object_id": object_id,
+                            "location_id": "LOCATION",
+                            "state": "IN_STOCK",
+                            "quantity": str(quantity),
+                        }
+                        for object_id, quantity in self.inventory_counts.items()
+                    ]
+                },
+            )
         if request.url.path == "/v2/orders/search":
             orders = list(self.orders)
             if self.created_order:
@@ -512,7 +601,160 @@ def test_square_catalog_drives_items_images_and_modifier_groups(square_app):
     assert item.modifier_groups[0].max_selected is None
 
 
+def test_square_inventory_displays_one_through_four_as_low_stock(square_app):
+    square_app.square_fixture.inventory_counts.update(
+        {
+            "VAR_SIDE": 1,
+            "VAR_DESSERT": 4,
+            "VAR_SALAD": 5,
+            "VAR_DRINK": 0,
+        }
+    )
+    client = square_app.test_client()
+    response = client.get("/")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Low stock · 1 left" in html
+    assert "Low stock · 4 left" in html
+    assert "Low stock · 5 left" not in html
+    assert html.count("Low stock ·") == 2
+    drink_button = re.search(
+        r'<button\b(?=[^>]*data-item-id="VAR_DRINK")[^>]*>', html
+    )
+    assert drink_button is not None
+    assert "disabled" in drink_button.group(0)
+
+    menu = square_app.extensions["menu_provider"].snapshot()
+    side = menu.items_by_id["VAR_SIDE"]
+    dessert = menu.items_by_id["VAR_DESSERT"]
+    salad = menu.items_by_id["VAR_SALAD"]
+    drink = menu.items_by_id["VAR_DRINK"]
+    pizza = menu.items_by_id["VAR_PLAIN"]
+    assert (side.stock_count, side.low_stock, side.available) == (1, True, True)
+    assert (dessert.stock_count, dessert.low_stock, dessert.available) == (
+        4,
+        True,
+        True,
+    )
+    assert (salad.stock_count, salad.low_stock, salad.available) == (
+        5,
+        False,
+        True,
+    )
+    assert (drink.stock_count, drink.low_stock, drink.available) == (
+        0,
+        False,
+        False,
+    )
+    assert (pizza.stock_count, pizza.low_stock, pizza.available) == (
+        None,
+        False,
+        True,
+    )
+
+    inventory_requests = [
+        request
+        for request in square_app.square_fixture.requests
+        if request.url.path == "/v2/inventory/counts/batch-retrieve"
+    ]
+    assert len(inventory_requests) == 1
+    javascript = client.get("/static/app.js").get_data(as_text=True)
+    assert "activeItem.low_stock" in javascript
+    assert "#item-stock" in javascript
+    css = client.get("/static/style.css").get_data(as_text=True)
+    assert (
+        ".menu-card-copy em.menu-stock { margin-top: 9px; "
+        "color: var(--paper); }"
+    ) in css
+
+    token = csrf(client)
+    too_many = client.post(
+        "/api/cart",
+        json={"item_id": "VAR_SIDE", "quantity": 2},
+        headers={"X-CSRF-Token": token},
+    )
+    assert too_many.status_code == 409
+    assert "Only 1 Garlic Knots left in stock." in too_many.get_json()["error"]
+
+
+def test_square_inventory_uses_positive_count_when_catalog_flag_is_omitted(
+    square_app,
+):
+    square_app.square_fixture.inventory_counts["VAR_PLAIN"] = 1
+    square_app.square_fixture.unflagged_inventory_ids.add("VAR_PLAIN")
+
+    response = square_app.test_client().get("/")
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_PLAIN"]
+    )
+
+    assert response.status_code == 200
+    assert b"Low stock \xc2\xb7 1 left" in response.data
+    assert (item.stock_count, item.low_stock, item.available) == (1, True, True)
+
+
+def test_square_inventory_matches_a_secondary_variation_for_single_variation_item(
+    square_app,
+):
+    square_app.square_fixture.inventory_aliases["VAR_PLAIN"] = (
+        "VAR_PLAIN_INVENTORY"
+    )
+    square_app.square_fixture.inventory_counts["VAR_PLAIN_INVENTORY"] = 1
+
+    response = square_app.test_client().get("/")
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_PLAIN"]
+    )
+
+    assert response.status_code == 200
+    assert b"Low stock \xc2\xb7 1 left" in response.data
+    assert (item.stock_count, item.low_stock, item.available) == (1, True, True)
+    assert sum(
+        request.url.path == "/v2/inventory/counts/batch-retrieve"
+        for request in square_app.square_fixture.requests
+    ) == 1
+
+
+def test_square_inventory_ignores_untracked_zero_count(square_app):
+    square_app.square_fixture.inventory_counts["VAR_PLAIN"] = 0
+    square_app.square_fixture.unflagged_inventory_ids.add("VAR_PLAIN")
+
+    response = square_app.test_client().get("/")
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_PLAIN"]
+    )
+
+    assert response.status_code == 200
+    assert (item.stock_count, item.low_stock, item.available) == (
+        None,
+        False,
+        True,
+    )
+
+
+def test_square_inventory_failure_keeps_the_last_good_counts(square_app):
+    square_app.square_fixture.inventory_counts["VAR_DESSERT"] = 3
+    provider = square_app.extensions["menu_provider"]
+    first = provider.snapshot()
+    assert first.items_by_id["VAR_DESSERT"].stock_count == 3
+
+    square_app.square_fixture.inventory_error = True
+    provider._cached_at = 0.0
+    refreshed = provider.snapshot()
+
+    assert refreshed.items_by_id["VAR_DESSERT"].stock_count == 3
+    assert refreshed.items_by_id["VAR_DESSERT"].low_stock is True
+
+
 def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
+    square_app.square_fixture.inventory_counts["VAR_SIDE"] = 10
     client = square_app.test_client()
     page = client.get("/")
     assert page.status_code == 200
@@ -525,6 +767,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
         )
 
     assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/inventory/counts/batch-retrieve") == 1
     assert request_count("/v2/orders/search") == 1
 
     # Opening the picker revalidates in the background, but the short server
@@ -532,6 +775,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
     slots = client.get("/api/slots?date=2026-08-06")
     assert slots.status_code == 200
     assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/inventory/counts/batch-retrieve") == 1
     assert request_count("/v2/orders/search") == 1
 
     with client.session_transaction() as browser_session:
@@ -555,6 +799,30 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
     # The cart uses the menu and remaining capacity shown on the page. It does
     # not block each click on another catalog or order search.
     assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/inventory/counts/batch-retrieve") == 1
+    assert request_count("/v2/orders/search") == 1
+
+
+def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
+    square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
+    prepare_app_for_serving(square_app, version="0.18.30")
+
+    def request_count(path: str) -> int:
+        return sum(
+            request.url.path == path
+            for request in square_app.square_fixture.requests
+        )
+
+    assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/inventory/counts/batch-retrieve") == 1
+    assert request_count("/v2/orders/search") == 1
+
+    response = square_app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert b"Low stock \xc2\xb7 4 left" in response.data
+    assert request_count("/v2/catalog/list") == 1
+    assert request_count("/v2/inventory/counts/batch-retrieve") == 1
     assert request_count("/v2/orders/search") == 1
 
 
@@ -765,7 +1033,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.16" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.29" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript

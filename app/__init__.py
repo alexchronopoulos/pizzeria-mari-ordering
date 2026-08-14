@@ -24,8 +24,8 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.27"
-SHARED_ASSET_VERSION = "0.18.16"
+APP_VERSION = "0.18.30"
+SHARED_ASSET_VERSION = "0.18.29"
 
 
 def _csv_setting(
@@ -303,6 +303,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 app.config["SQUARE_EXCLUDED_MODIFIER_LIST_NAMES"]
             ),
             cache_seconds=app.config["SQUARE_CATALOG_CACHE_SECONDS"],
+            logger=app.logger,
         )
         commerce = SquareCommerce(
             client=client,
