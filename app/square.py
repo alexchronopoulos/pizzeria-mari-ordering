@@ -179,6 +179,28 @@ class SquareClient:
         payload = self.request("GET", f"/v2/payments/{payment_id}")
         return payload["payment"]
 
+    def list_payments(
+        self, *, location_id: str, created_after: datetime
+    ) -> list[dict]:
+        payments: list[dict] = []
+        cursor = None
+        while True:
+            params = {
+                "begin_time": created_after.astimezone(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "location_id": location_id,
+                "limit": 100,
+                "sort_order": "DESC",
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = self.request("GET", "/v2/payments", params=params)
+            payments.extend(payload.get("payments", []))
+            cursor = payload.get("cursor")
+            if not cursor:
+                return payments
+
     def search_orders(self, *, location_id: str, created_after: datetime) -> list[dict]:
         orders: list[dict] = []
         cursor = None
@@ -643,9 +665,17 @@ class SquareCommerce:
     def _fetch_pizza_counts(
         self, *, variation_ids: set[str], now: datetime
     ) -> dict[str, int]:
+        # Pickup is offered seven days ahead. Ten days covers every order that
+        # can still affect a displayed slot without scanning a month of the
+        # merchant's unrelated in-person payments.
+        created_after = now - timedelta(days=10)
         orders = self.client.search_orders(
             location_id=self.location_id,
-            created_after=now - timedelta(days=31),
+            created_after=created_after,
+        )
+        hosted_payment_statuses = self._hosted_payment_statuses(
+            orders=orders,
+            created_after=created_after,
         )
         counts: dict[str, int] = {}
         for order in orders:
@@ -664,7 +694,9 @@ class SquareCommerce:
             if (
                 state == "OPEN"
                 and reference_id.startswith(CHECKOUT_REFERENCE_PREFIX)
-                and not self._hosted_checkout_is_paid(order)
+                and not self._hosted_checkout_is_paid(
+                    order, hosted_payment_statuses
+                )
             ):
                 # Hosted Checkout can leave an OPEN order and Payment ID after
                 # a decline. Only a completed payment reserves capacity.
@@ -712,10 +744,81 @@ class SquareCommerce:
         self._remember_payment_status(payment_id, status)
         return status
 
-    def _hosted_checkout_is_paid(self, order: dict) -> bool:
+    def _hosted_payment_statuses(
+        self, *, orders: list[dict], created_after: datetime
+    ) -> dict[str, str]:
+        payment_ids = list(
+            dict.fromkeys(
+                payment_id
+                for order in orders
+                if order.get("state") == "OPEN"
+                and str(order.get("reference_id", "")).startswith(
+                    CHECKOUT_REFERENCE_PREFIX
+                )
+                for tender in order.get("tenders", [])
+                if (payment_id := self._payment_id(tender))
+            )
+        )
+        if not payment_ids:
+            return {}
+
+        statuses: dict[str, str] = {}
+        checked_at = time.monotonic()
+        with self._payment_status_lock:
+            cached_statuses = dict(self._payment_status_cache)
+        for payment_id in payment_ids:
+            cached = cached_statuses.get(payment_id)
+            if not cached:
+                continue
+            status, cached_at = cached
+            lifetime = (
+                300.0
+                if status in {"COMPLETED", "FAILED", "CANCELED"}
+                else 2.0
+            )
+            if checked_at - cached_at < lifetime:
+                statuses[payment_id] = status
+
+        unresolved = [
+            payment_id
+            for payment_id in payment_ids
+            if payment_id not in statuses
+        ]
+        if not unresolved:
+            return statuses
+
+        list_payments = getattr(self.client, "list_payments", None)
+        if not callable(list_payments):
+            # Compatibility for lightweight clients used by older installs and
+            # tests. The production Square client uses one paginated list call.
+            for payment_id in unresolved:
+                statuses[payment_id] = self._payment_status(payment_id)
+            return statuses
+
+        unresolved_ids = set(unresolved)
+        for payment in list_payments(
+            location_id=self.location_id,
+            created_after=created_after,
+        ):
+            payment_id = str(payment.get("id", ""))
+            if payment_id not in unresolved_ids:
+                continue
+            status = str(payment.get("status", ""))
+            statuses[payment_id] = status
+            self._remember_payment_status(payment_id, status)
+        return statuses
+
+    def _hosted_checkout_is_paid(
+        self, order: dict, payment_statuses: dict[str, str] | None = None
+    ) -> bool:
         for tender in order.get("tenders", []):
             payment_id = self._payment_id(tender)
-            if payment_id and self._payment_status(payment_id) == "COMPLETED":
+            status = (
+                payment_statuses.get(payment_id, "")
+                if payment_statuses is not None
+                else self._payment_status(payment_id)
+            )
+            if payment_id and status == "COMPLETED":
                 return True
         return False
 
