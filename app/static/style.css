@@ -186,7 +186,7 @@ a { color: inherit; }
   display: block;
   width: 100%;
   height: 100%;
-  background-position: center 56%;
+  background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
   border: 0;
@@ -251,7 +251,7 @@ a { color: inherit; }
 .item-detail-media #item-art.item-photo {
   width: 100%;
   height: 100%;
-  background-position: center 58%;
+  background-position: center;
   background-size: cover;
 }
 .item-detail-media #item-art:not(.item-photo) { width: 42%; }

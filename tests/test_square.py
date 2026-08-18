@@ -212,6 +212,7 @@ class SquareFixture:
         self.order_state_override: str | None = None
         self.inventory_counts: dict[str, int] = {}
         self.unflagged_inventory_ids: set[str] = set()
+        self.tracked_inventory_ids: set[str] = set()
         self.inventory_aliases: dict[str, str] = {}
         self.inventory_error = False
 
@@ -255,7 +256,10 @@ class SquareFixture:
                     "variations", []
                 ):
                     if (
-                        variation.get("id") in self.inventory_counts
+                        variation.get("id") in (
+                            self.inventory_counts.keys()
+                            | self.tracked_inventory_ids
+                        )
                         and variation.get("id")
                         not in self.unflagged_inventory_ids
                     ):
@@ -678,22 +682,33 @@ def test_square_inventory_displays_one_through_four_as_low_stock(square_app):
     assert "Only 1 Garlic Knots left in stock." in too_many.get_json()["error"]
 
 
-def test_square_inventory_uses_positive_count_when_catalog_flag_is_omitted(
+def test_square_inventory_ignores_legacy_count_when_tracking_is_disabled(
     square_app,
 ):
-    square_app.square_fixture.inventory_counts["VAR_PLAIN"] = 1
-    square_app.square_fixture.unflagged_inventory_ids.add("VAR_PLAIN")
+    fixture = square_app.square_fixture
+    fixture.inventory_counts["VAR_DRINK"] = 2
+    provider = square_app.extensions["menu_provider"]
 
-    response = square_app.test_client().get("/")
-    item = (
-        square_app.extensions["menu_provider"]
-        .snapshot()
-        .items_by_id["VAR_PLAIN"]
+    first = provider.snapshot().items_by_id["VAR_DRINK"]
+    assert (first.stock_count, first.low_stock, first.available) == (
+        2,
+        True,
+        True,
     )
 
+    fixture.unflagged_inventory_ids.add("VAR_DRINK")
+    provider._cached_at = 0.0
+
+    response = square_app.test_client().get("/")
+    item = provider.snapshot().items_by_id["VAR_DRINK"]
+
     assert response.status_code == 200
-    assert b"Low stock \xc2\xb7 1 left" in response.data
-    assert (item.stock_count, item.low_stock, item.available) == (1, True, True)
+    assert b"Low stock \xc2\xb7 2 left" not in response.data
+    assert (item.stock_count, item.low_stock, item.available) == (
+        None,
+        False,
+        True,
+    )
 
 
 def test_square_inventory_matches_a_secondary_variation_for_single_variation_item(
@@ -702,6 +717,7 @@ def test_square_inventory_matches_a_secondary_variation_for_single_variation_ite
     square_app.square_fixture.inventory_aliases["VAR_PLAIN"] = (
         "VAR_PLAIN_INVENTORY"
     )
+    square_app.square_fixture.tracked_inventory_ids.add("VAR_PLAIN")
     square_app.square_fixture.inventory_counts["VAR_PLAIN_INVENTORY"] = 1
 
     response = square_app.test_client().get("/")
@@ -805,7 +821,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.30")
+    prepare_app_for_serving(square_app, version="0.18.33")
 
     def request_count(path: str) -> int:
         return sum(
@@ -884,13 +900,13 @@ def test_square_menu_uses_large_borderless_image_above_item_name(square_app):
     assert "aspect-ratio: 1" in css
     assert ".menu-card {" in css and "border: 2px solid var(--ink)" in css
     assert ".menu-photo" in css and "background-size: cover" in css
-    assert "background-position: center 56%" in css
+    assert "background-position: center;" in css
     detail_rules = css[css.index(".item-detail-media {"):css.index(".item-detail-media #item-art:not(.item-photo)")]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "aspect-ratio" not in detail_rules
     assert "background: transparent" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert "background-position: center 58%" in detail_rules
+    assert "background-position: center;" in detail_rules
 
 
 def test_square_additions_use_whole_list_as_the_single_canonical_option_set(square_app):
@@ -1033,7 +1049,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.29" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.32" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript

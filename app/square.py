@@ -451,7 +451,7 @@ class SquareCatalogProvider:
         inventory_counts = {
             object_id: quantity
             for object_id, quantity in self._inventory_counts.items()
-            if object_id in inventory_variations
+            if inventory_variations.get(object_id, False)
         }
         try:
             retrieved_counts = self.client.inventory_counts(
@@ -466,13 +466,14 @@ class SquareCatalogProvider:
                     exc_info=True,
                 )
         else:
-            # Square can omit the catalog tracking flag even while a variation
-            # has a positive inventory count. Positive counts are authoritative
-            # for low-stock display. A zero count is used only when catalog
-            # tracking is explicitly enabled, so untracked menu items are not
-            # accidentally made unavailable.
+            # Inventory counts can remain in Square after tracking is disabled.
+            # The catalog tracking flag is therefore authoritative: availability-
+            # managed items must ignore those legacy counts and rely only on the
+            # sold-out flag.
             inventory_counts = {}
             for object_id, tracks_inventory in inventory_variations.items():
+                if not tracks_inventory:
+                    continue
                 quantity = retrieved_counts.get(object_id)
                 if quantity is None:
                     alias_quantities = [
@@ -482,9 +483,7 @@ class SquareCatalogProvider:
                     ]
                     if len(alias_quantities) == 1:
                         quantity = alias_quantities[0]
-                if quantity is not None and (
-                    quantity > 0 or tracks_inventory
-                ):
+                if quantity is not None:
                     inventory_counts[object_id] = quantity
             self._inventory_counts = inventory_counts
         return self._build(objects, inventory_counts=inventory_counts)
