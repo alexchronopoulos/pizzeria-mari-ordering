@@ -24,7 +24,7 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.33"
+APP_VERSION = "0.18.34"
 SHARED_ASSET_VERSION = "0.18.32"
 
 

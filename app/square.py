@@ -1078,9 +1078,15 @@ class SquareCommerce:
         notes: str = "",
         reference_id: str | None = None,
     ) -> dict:
+        order_lines = self._order_line_items(lines, items_by_id)
+        if service_at and order_lines:
+            order_lines[0]["note"] = (
+                "Pickup: "
+                + service_at.strftime("%A, %B %-d at %-I:%M %p")
+            )
         order = {
             "location_id": self.location_id,
-            "line_items": self._order_line_items(lines, items_by_id),
+            "line_items": order_lines,
             "pricing_options": {
                 "auto_apply_taxes": True,
                 "auto_apply_discounts": True,

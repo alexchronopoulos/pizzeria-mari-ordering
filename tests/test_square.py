@@ -337,6 +337,10 @@ class SquareFixture:
             body = json.loads(request.read())
             order = body["order"]
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
+            assert order["line_items"][0]["note"] == (
+                "Pickup: Thursday, August 6 at 4:00 PM"
+            )
+            assert sum("note" in line for line in order["line_items"]) == 1
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
             assert pickup["recipient"]["display_name"] == "Alex Customer"
@@ -422,6 +426,10 @@ class GiftCardFixture(SquareFixture):
             uuid.UUID(body["idempotency_key"])
             assert order["reference_id"].startswith("PMGC-")
             assert order["line_items"][0]["catalog_object_id"] == "VAR_PLAIN"
+            assert order["line_items"][0]["note"] == (
+                "Pickup: Thursday, August 6 at 4:00 PM"
+            )
+            assert sum("note" in line for line in order["line_items"]) == 1
             pickup = order["fulfillments"][0]["pickup_details"]
             assert pickup["pickup_at"] == "2026-08-06T16:00:00-04:00"
             self.created_order = {
@@ -821,7 +829,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.33")
+    prepare_app_for_serving(square_app, version="0.18.34")
 
     def request_count(path: str) -> int:
         return sum(
@@ -980,6 +988,36 @@ def test_square_unlimited_modifier_group_accepts_multiple_options(square_app):
         "Preferences: Double Cut",
         "Preferences: No Basil",
     ]
+
+
+def test_pickup_time_is_added_to_the_receipt_once_for_multiple_items(square_app):
+    menu = square_app.extensions["menu_provider"].snapshot()
+    payload = square_app.extensions["square_commerce"].order_payload(
+        lines=[{"item_id": "VAR_PLAIN", "quantity": 2}],
+        items_by_id=menu.items_by_id,
+        service_at=datetime(
+            2026,
+            8,
+            20,
+            18,
+            15,
+            tzinfo=ZoneInfo("America/New_York"),
+        ),
+        customer={
+            "name": "Receipt Customer",
+            "email": "receipt@example.com",
+            "phone": "+15185550100",
+        },
+    )
+
+    assert len(payload["line_items"]) == 2
+    assert payload["line_items"][0]["note"] == (
+        "Pickup: Thursday, August 20 at 6:15 PM"
+    )
+    assert "note" not in payload["line_items"][1]
+    assert payload["fulfillments"][0]["pickup_details"]["pickup_at"] == (
+        "2026-08-20T18:15:00-04:00"
+    )
 
 
 def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_app):
