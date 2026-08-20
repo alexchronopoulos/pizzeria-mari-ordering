@@ -23,6 +23,11 @@ from flask import (
 
 from .capacity import SlotUnavailableError
 from .cart import CartLimitError, cart_totals, validate_cart
+from .day_availability import (
+    cart_day_availability_error,
+    item_day_availability_error,
+    service_weekday,
+)
 from .menu import MenuItem, MenuSnapshot
 from .operations import log_event
 from .scheduling import (
@@ -622,6 +627,11 @@ def api_select_slot():
         return jsonify({"error": "That pickup time is no longer available."}), 400
 
     menu = _menu(allow_stale=True)
+    availability_error = cart_day_availability_error(
+        _cart(), menu.items_by_id, selected.weekday()
+    )
+    if availability_error:
+        return jsonify({"error": availability_error}), 409
     remaining = _remaining(selected, menu)
     required_pizzas = max(1, cart_totals(_cart(), menu.items_by_id)["pizza_count"])
     if remaining < required_pizzas:
@@ -656,6 +666,11 @@ def api_add_to_cart():
     item = items_by_id.get(data.get("item_id"))
     if not item or not item.available:
         return jsonify({"error": "That item is not currently available."}), 400
+    availability_error = item_day_availability_error(
+        item, service_weekday(session.get("service_at"))
+    )
+    if availability_error:
+        return jsonify({"error": availability_error}), 409
 
     try:
         quantity = int(data.get("quantity", 1))
@@ -732,6 +747,13 @@ def api_update_cart_quantity(line_id: str):
         {**line, "quantity": quantity} if line["id"] == line_id else line
         for line in lines
     ]
+    availability_error = cart_day_availability_error(
+        updated_lines,
+        items_by_id,
+        service_weekday(session.get("service_at")),
+    )
+    if availability_error:
+        return jsonify({"error": availability_error}), 409
     try:
         validate_cart(
             updated_lines,
@@ -807,6 +829,15 @@ def checkout():
     )
     if not selected:
         return redirect(url_for("storefront.index"))
+
+    availability_error = cart_day_availability_error(
+        lines, items_by_id, selected.weekday()
+    )
+    if availability_error:
+        return render_template(
+            "day_availability_unavailable.html",
+            availability_error=availability_error,
+        ), 409
 
     pricing = _pricing(lines, items_by_id)
     error = session.pop("checkout_error", None)

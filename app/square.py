@@ -30,6 +30,26 @@ SQUARE_BASE_URLS = {
 CHECKOUT_REFERENCE_PREFIX = "PMOC-"
 GIFT_CARD_REFERENCE_PREFIX = "PMGC-"
 LOW_STOCK_THRESHOLD = 5
+DAYS_AVAILABLE_ATTRIBUTE_KEY = "daysavailable"
+WEEKDAYS_BY_NAME = {
+    "monday": 0,
+    "mon": 0,
+    "tuesday": 1,
+    "tue": 1,
+    "tues": 1,
+    "wednesday": 2,
+    "wed": 2,
+    "thursday": 3,
+    "thu": 3,
+    "thur": 3,
+    "thurs": 3,
+    "friday": 4,
+    "fri": 4,
+    "saturday": 5,
+    "sat": 5,
+    "sunday": 6,
+    "sun": 6,
+}
 
 
 class SquareAPIError(RuntimeError):
@@ -129,7 +149,10 @@ class SquareClient:
         cursor = None
         while True:
             params = {
-                "types": "ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,IMAGE",
+                "types": (
+                    "ITEM,ITEM_VARIATION,CATEGORY,MODIFIER_LIST,IMAGE,"
+                    "CUSTOM_ATTRIBUTE_DEFINITION"
+                ),
                 "include_deleted_objects": "true",
             }
             if cursor:
@@ -387,6 +410,93 @@ def _selection_limits(
     return min_selected, max_selected
 
 
+def _normalized_attribute_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+
+def _weekday_number(value: object) -> int | None:
+    return WEEKDAYS_BY_NAME.get(str(value or "").strip().casefold())
+
+
+def _day_attribute_definitions(
+    objects: list[dict],
+) -> dict[str, dict[str, int]]:
+    definitions: dict[str, dict[str, int]] = {}
+    for catalog_object in objects:
+        if (
+            catalog_object.get("type") != "CUSTOM_ATTRIBUTE_DEFINITION"
+            or catalog_object.get("is_deleted", False)
+        ):
+            continue
+        data = catalog_object.get("custom_attribute_definition_data", {})
+        if DAYS_AVAILABLE_ATTRIBUTE_KEY not in {
+            _normalized_attribute_name(data.get("key")),
+            _normalized_attribute_name(data.get("name")),
+        }:
+            continue
+        selections = data.get("selection_config", {}).get(
+            "allowed_selections", []
+        )
+        uid_days = {
+            selection["uid"]: weekday
+            for selection in selections
+            if selection.get("uid")
+            and (weekday := _weekday_number(selection.get("name"))) is not None
+        }
+        if catalog_object.get("id"):
+            definitions[catalog_object["id"]] = uid_days
+    return definitions
+
+
+def _object_days_available(
+    catalog_object: dict,
+    definitions: dict[str, dict[str, int]],
+) -> tuple[int, ...] | None:
+    values = catalog_object.get("custom_attribute_values", {})
+    if not isinstance(values, dict):
+        return None
+    for map_key, value in values.items():
+        if not isinstance(value, dict):
+            continue
+        definition_id = value.get("custom_attribute_definition_id")
+        is_day_attribute = definition_id in definitions or (
+            DAYS_AVAILABLE_ATTRIBUTE_KEY
+            in {
+                _normalized_attribute_name(map_key),
+                _normalized_attribute_name(value.get("key")),
+                _normalized_attribute_name(value.get("name")),
+            }
+        )
+        if not is_day_attribute:
+            continue
+        uid_days = definitions.get(definition_id, {})
+        selected_days = {
+            uid_days[uid]
+            for uid in value.get("selection_uid_values", [])
+            if uid in uid_days
+        }
+        if not selected_days and value.get("string_value"):
+            selected_days = {
+                weekday
+                for part in re.split(r"[,;|]", value["string_value"])
+                if (weekday := _weekday_number(part)) is not None
+            }
+        return tuple(sorted(selected_days))
+    return None
+
+
+def _days_available(
+    item_object: dict,
+    variation: dict,
+    definitions: dict[str, dict[str, int]],
+) -> tuple[int, ...]:
+    variation_days = _object_days_available(variation, definitions)
+    if variation_days is not None:
+        return variation_days
+    item_days = _object_days_available(item_object, definitions)
+    return item_days or ()
+
+
 class SquareCatalogProvider:
     def __init__(
         self,
@@ -568,6 +678,7 @@ class SquareCatalogProvider:
         inventory_counts: dict[str, int] | None = None,
     ) -> MenuSnapshot:
         inventory_counts = inventory_counts or {}
+        day_attribute_definitions = _day_attribute_definitions(objects)
         categories = {
             obj["id"]: obj
             for obj in objects
@@ -682,6 +793,11 @@ class SquareCatalogProvider:
                         low_stock=(
                             stock_count is not None
                             and 0 < stock_count < LOW_STOCK_THRESHOLD
+                        ),
+                        days_available=_days_available(
+                            item_object,
+                            variation,
+                            day_attribute_definitions,
                         ),
                     )
                 )

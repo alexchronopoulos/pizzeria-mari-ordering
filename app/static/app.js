@@ -5,6 +5,7 @@
   const itemDialog = document.querySelector('#item-dialog');
   const slotGrid = document.querySelector('#slot-grid');
   const itemError = document.querySelector('#item-error');
+  const itemAvailabilityMessage = document.querySelector('#item-availability-message');
   const slotCache = new Map(Object.entries(data.slotsByDate || {}));
   const slotCacheTimes = new Map([...slotCache.keys()].map((date) => [date, Date.now()]));
   const slotRequests = new Map();
@@ -24,6 +25,42 @@
 
   const setBackgroundImage = (element, url) => {
     element.style.backgroundImage = url ? `url(${JSON.stringify(url)})` : '';
+  };
+
+  const selectedWeekday = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.selectedDate || '')) return null;
+    const javascriptWeekday = new Date(`${data.selectedDate}T12:00:00`).getDay();
+    return (javascriptWeekday + 6) % 7;
+  };
+
+  const dayAvailability = (item) => {
+    if (!Array.isArray(item?.days_available) || item.days_available.length === 0) {
+      return null;
+    }
+    return {
+      allowed: item.days_available.includes(selectedWeekday()),
+      label: item.days_available_label,
+    };
+  };
+
+  const updateMenuDayAvailability = () => {
+    document.querySelectorAll('.menu-card').forEach((card) => {
+      const item = data.menu?.[card.dataset.itemId];
+      const availability = dayAvailability(item);
+      let notice = card.querySelector('[data-day-availability]');
+      if (!availability || availability.allowed) {
+        if (notice) notice.hidden = true;
+        return;
+      }
+      if (!notice) {
+        notice = document.createElement('em');
+        notice.className = 'menu-stock item-day-availability';
+        notice.dataset.dayAvailability = '';
+        card.querySelector('.menu-card-copy')?.append(notice);
+      }
+      notice.textContent = `Pickup ${availability.label} only`;
+      notice.hidden = false;
+    });
   };
 
   document.querySelectorAll('.menu-photo[data-image-url]').forEach((photo) => {
@@ -142,6 +179,8 @@
       });
       document.querySelector('#selected-pickup').textContent = `${selected.date} at ${selected.time}`;
       data.selectedDate = selected.service_at.slice(0, 10);
+      updateMenuDayAvailability();
+      if (activeItem) updateAddButton();
       pickupDialog.close();
     } catch (error) {
       button.insertAdjacentHTML('afterend', `<p class="form-error">${escapeHtml(error.message)}</p>`);
@@ -158,6 +197,7 @@
     const reachesPizzaLimit = activeItem.capacity_category === 'pizza'
       && pizzaCount + quantity >= data.pizzaLimit;
     const reachesTotalLimit = itemCount + quantity >= data.totalLimit;
+    const availability = dayAvailability(activeItem);
 
     button.disabled = false;
     button.classList.remove('button-limit');
@@ -167,6 +207,8 @@
     quantityUp.title = reachesPizzaLimit
       ? `${data.pizzaLimit} pizza maximum`
       : (reachesTotalLimit ? `${data.totalLimit} item maximum` : '');
+    itemAvailabilityMessage.hidden = true;
+    itemAvailabilityMessage.textContent = '';
 
     if (activeItem.capacity_category === 'pizza' && pizzaCount >= data.pizzaLimit) {
       label.textContent = `${data.pizzaLimit} pizza maximum reached`;
@@ -184,6 +226,17 @@
     } else if (reachesTotalLimit) {
       label.textContent = `Add to order · ${data.totalLimit} item maximum`;
       button.classList.add('button-limit');
+    }
+
+    if (availability && !availability.allowed) {
+      itemAvailabilityMessage.textContent = `${activeItem.name} can only be ordered for pickup on ${availability.label}. Change your pickup day to add it to your order.`;
+      itemAvailabilityMessage.hidden = false;
+      label.textContent = `Available ${availability.label} only`;
+      price.hidden = true;
+      button.disabled = true;
+      button.classList.add('button-limit');
+      quantityUp.disabled = true;
+      quantityUp.title = `Available ${availability.label} only`;
     }
   };
 
@@ -395,4 +448,5 @@
   });
 
   renderCart(data.cart);
+  updateMenuDayAvailability();
 })();

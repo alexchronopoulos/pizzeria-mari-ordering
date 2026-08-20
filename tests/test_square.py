@@ -215,9 +215,58 @@ class SquareFixture:
         self.tracked_inventory_ids: set[str] = set()
         self.inventory_aliases: dict[str, str] = {}
         self.inventory_error = False
+        self.day_availability: dict[str, tuple[str, ...]] = {}
 
     def _catalog_objects(self) -> list[dict]:
         objects = catalog_objects()
+        if self.day_availability:
+            day_names = (
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            )
+            objects.append(
+                {
+                    "type": "CUSTOM_ATTRIBUTE_DEFINITION",
+                    "id": "DAYS_AVAILABLE_DEFINITION",
+                    "custom_attribute_definition_data": {
+                        "name": "Days_Available",
+                        "key": "Days_Available",
+                        "type": "SELECTION",
+                        "allowed_object_types": ["ITEM"],
+                        "selection_config": {
+                            "max_allowed_selections": 7,
+                            "allowed_selections": [
+                                {"uid": f"DAY_{name.upper()}", "name": name}
+                                for name in day_names
+                            ],
+                        },
+                    },
+                }
+            )
+            for catalog_object in objects:
+                selected_days = self.day_availability.get(
+                    catalog_object.get("id", "")
+                )
+                if not selected_days:
+                    continue
+                catalog_object["custom_attribute_values"] = {
+                    "Days_Available": {
+                        "name": "Days_Available",
+                        "key": "Days_Available",
+                        "type": "SELECTION",
+                        "custom_attribute_definition_id": (
+                            "DAYS_AVAILABLE_DEFINITION"
+                        ),
+                        "selection_uid_values": [
+                            f"DAY_{name.upper()}" for name in selected_days
+                        ],
+                    }
+                }
         for displayed_id, alias_id in self.inventory_aliases.items():
             for catalog_object in objects:
                 variations = catalog_object.get("item_data", {}).get(
@@ -250,6 +299,10 @@ class SquareFixture:
         assert request.headers["square-version"] == "2026-07-15"
         if request.method == "GET" and request.url.path == "/v2/catalog/list":
             assert "ITEM_VARIATION" in request.url.params["types"].split(",")
+            assert (
+                "CUSTOM_ATTRIBUTE_DEFINITION"
+                in request.url.params["types"].split(",")
+            )
             objects = self._catalog_objects()
             for catalog_object in objects:
                 for variation in catalog_object.get("item_data", {}).get(
@@ -763,6 +816,33 @@ def test_square_inventory_ignores_untracked_zero_count(square_app):
     )
 
 
+def test_square_menu_parses_multi_select_days_available_without_extra_read(
+    square_app,
+):
+    square_app.square_fixture.day_availability["ITEM_DESSERT"] = (
+        "Friday",
+        "Saturday",
+        "Sunday",
+    )
+
+    response = square_app.test_client().get("/")
+    item = (
+        square_app.extensions["menu_provider"]
+        .snapshot()
+        .items_by_id["VAR_DESSERT"]
+    )
+
+    assert response.status_code == 200
+    assert item.days_available == (4, 5, 6)
+    assert item.public_dict()["days_available_label"] == (
+        "Friday, Saturday, or Sunday"
+    )
+    assert sum(
+        request.url.path == "/v2/catalog/list"
+        for request in square_app.square_fixture.requests
+    ) == 1
+
+
 def test_square_inventory_failure_keeps_the_last_good_counts(square_app):
     square_app.square_fixture.inventory_counts["VAR_DESSERT"] = 3
     provider = square_app.extensions["menu_provider"]
@@ -829,7 +909,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.34")
+    prepare_app_for_serving(square_app, version="0.18.35")
 
     def request_count(path: str) -> int:
         return sum(
@@ -1087,7 +1167,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.32" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.35" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript

@@ -4,6 +4,28 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 
+WEEKDAY_NAMES = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def format_available_days(days: tuple[int, ...] | list[int]) -> str:
+    names = [WEEKDAY_NAMES[day] for day in days if 0 <= day < len(WEEKDAY_NAMES)]
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} or {names[1]}"
+    return f"{', '.join(names[:-1])}, or {names[-1]}"
+
+
 @dataclass(frozen=True)
 class ModifierOption:
     id: str
@@ -95,6 +117,7 @@ class MenuItem:
     catalog_version: int | None = None
     stock_count: int | None = None
     low_stock: bool = False
+    days_available: tuple[int, ...] = field(default_factory=tuple)
 
     def public_dict(self) -> dict:
         return {
@@ -111,6 +134,8 @@ class MenuItem:
             "available": self.available,
             "stock_count": self.stock_count,
             "low_stock": self.low_stock,
+            "days_available": list(self.days_available),
+            "days_available_label": format_available_days(self.days_available),
             "art": self.art,
             "image_url": self.image_url,
         }

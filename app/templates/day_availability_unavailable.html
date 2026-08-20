@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Pickup-day Availability | Pizzeria Mari Order Online{% endblock %}
+
+{% block body %}
+<main class="confirmation-shell">
+  <section class="confirmation-card">
+    <span class="eyebrow">Pickup-day availability</span>
+    <h1>One of your items is not offered that day.</h1>
+    <p>{{ availability_error }}</p>
+    <a class="button button-primary" href="{{ url_for('storefront.index') }}#cart">Return to your cart</a>
+  </section>
+</main>
+{% endblock %}

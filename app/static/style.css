@@ -181,6 +181,13 @@ a { color: inherit; }
   text-transform: uppercase;
 }
 .menu-card-copy em.menu-stock { margin-top: 9px; color: var(--paper); }
+.menu-card-copy em.item-day-availability {
+  max-width: 100%;
+  width: fit-content;
+  color: var(--ink);
+  background: var(--yellow);
+  line-height: 1.25;
+}
 .item-stock { margin: 0 22px 20px; }
 .menu-photo {
   display: block;
@@ -260,6 +267,14 @@ a { color: inherit; }
 .item-modal-heading h2 { margin: 3px 0 0; font: 500 clamp(2rem, 6vw, 3rem)/1 var(--font-display); }
 .modal-lede { margin: 0; padding: 20px 22px; }
 .item-modal .modal-lede { padding: 12px 22px 20px; }
+.item-availability-message {
+  margin: -8px 22px 20px;
+  padding: 12px;
+  color: var(--paper);
+  background: var(--red);
+  border: 2px solid var(--ink);
+  font-weight: 800;
+}
 .item-stock {
   width: max-content;
   margin: -8px 22px 20px;

@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.34 capabilities
+## Current v0.18.35 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -16,6 +16,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Checkout collects required first name, last name, email, and phone fields with optional order notes.
 - Buyers can opt to remember those four contact fields in their current browser for faster future checkout; the data is never stored by the server.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
+- Optional `Days_Available` multi-select Item attribute from Square. Restricted items remain visible every day, show a clear pickup-day warning, and cannot be added or checked out for an unconfigured day. Items without the attribute remain unrestricted, and the attribute is loaded in the existing catalog request.
 - Square inventory-aware availability. Every menu item with a positive Square inventory count of one through four shows a visible `Low stock · 2 left` badge on its card and item dialog, even if Square omits the catalog tracking flag. An explicitly tracked zero count is unavailable, while five or more has no warning. The remaining quantity is enforced in the cart and rechecked before checkout.
 - Large square menu photography with a pizza-centered focal crop and no image border; the complete item card has a border. Item details show a larger uncropped image above the item name.
 - One compact Additions picker whose visible options come from Square's Whole Pie Additions list. Whole, first-half, and second-half choices resolve to the matching option and price in their respective Square lists.
@@ -118,6 +119,18 @@ SQUARE_EXCLUDED_MODIFIER_LIST_NAMES=Sides & Desserts,Drinks
 All items in `SQUARE_PIZZA_CATEGORY_NAMES` consume pizza cart and pickup-slot capacity. Items in Sides, Desserts, Salads, and Drinks count only toward the overall cart limit.
 
 `SQUARE_EXCLUDED_MODIFIER_LIST_NAMES` contains exact Square modifier-list names that should not appear inside an item's customization dialog. This does not delete or copy those lists; the catalog remains in Square.
+
+To limit an Item to particular pickup days, create a Square Item custom attribute
+named `Days_Available`. Configure it as a multi-select Selection attribute with
+choices named exactly `Monday`, `Tuesday`, `Wednesday`, `Thursday`, `Friday`,
+`Saturday`, and `Sunday`, and make it readable by the ordering application. Select
+the allowed days on each restricted Item. Leave the attribute unset or empty for
+items that should be orderable every service day.
+
+Restricted items stay visible on the menu. On an unconfigured pickup day the card
+shows the allowed days, the item dialog explains how to change the pickup day, and
+the add button is disabled. The server repeats the same validation when an item is
+added, a cart's pickup day is changed, its quantity is changed, and checkout opens.
 
 Catalog and inventory results are joined and held in process memory for 30 seconds by default to keep page loads fast. They are never written to disk. Cart and checkout validation use the inventory count only when Square has enabled tracking for that variation at the configured location:
 

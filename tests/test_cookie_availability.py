@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-import re
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,16 +10,17 @@ from app import create_app
 from app.menu import MenuItem, MenuSnapshot
 
 
-class CookieMenuProvider:
+class DayRestrictedMenuProvider:
     def __init__(self, base_snapshot: MenuSnapshot) -> None:
         cookie = MenuItem(
             id="weekend-cookie",
-            name="Chocolate Chip Cookie (Friday–Sunday)",
+            name="Chocolate Chip Cookie",
             category="desserts",
             category_label="Desserts",
             capacity_category=None,
             price_cents=500,
-            description="Available Friday through Sunday.",
+            description="A very good cookie.",
+            days_available=(4, 5, 6),
         )
         self.snapshot_value = MenuSnapshot(
             groups=(
@@ -47,7 +48,7 @@ def app():
             ),
         }
     )
-    configured.extensions["menu_provider"] = CookieMenuProvider(
+    configured.extensions["menu_provider"] = DayRestrictedMenuProvider(
         configured.extensions["menu_provider"].snapshot()
     )
     return configured
@@ -72,17 +73,17 @@ def add_cookie(client):
     )
 
 
-def test_cookie_is_hidden_for_thursday_and_script_tracks_date_changes(app):
+def test_restricted_item_remains_visible_and_has_client_side_day_data(app):
     client = app.test_client()
     response = client.get("/")
     page = response.get_data(as_text=True)
-    cookie_button = re.search(
-        r'<button\b(?=[^>]*data-item-id="weekend-cookie")[^>]*>', page
-    )
+
     assert response.status_code == 200
-    assert cookie_button is not None
-    assert " hidden" in cookie_button.group(0)
-    assert "/static/cookie-availability.js?v=0.18.34" in page
+    assert 'data-item-id="weekend-cookie"' in page
+    assert '"days_available": [4, 5, 6]' in page
+    assert '"days_available_label": "Friday, Saturday, or Sunday"' in page
+    assert "/static/app.js?v=0.18.35" in page
+    assert "cookie-availability.js" not in page
 
 
 @pytest.mark.parametrize(
@@ -93,31 +94,25 @@ def test_cookie_is_hidden_for_thursday_and_script_tracks_date_changes(app):
         "2026-08-09T11:00:00-04:00",
     ),
 )
-def test_cookie_is_visible_and_can_be_added_friday_through_sunday(
-    app, service_at
-):
+def test_restricted_item_can_be_added_on_each_configured_day(app, service_at):
     client = app.test_client()
     set_pickup(client, service_at)
-    page = client.get("/").get_data(as_text=True)
-    cookie_button = re.search(
-        r'<button\b(?=[^>]*data-item-id="weekend-cookie")[^>]*>', page
-    )
-    assert cookie_button is not None
-    assert " hidden" not in cookie_button.group(0)
     assert add_cookie(client).status_code == 201
 
 
-def test_cookie_cannot_be_added_for_thursday_even_with_direct_api_request(app):
+def test_restricted_item_cannot_be_added_on_an_unconfigured_day(app):
     client = app.test_client()
     set_pickup(client, "2026-08-06T16:00:00-04:00")
     response = add_cookie(client)
+
     assert response.status_code == 409
     assert response.get_json()["error"] == (
-        "Cookies are only available Friday through Sunday."
+        "Chocolate Chip Cookie can only be ordered for pickup on Friday, "
+        "Saturday, or Sunday. Change your pickup day to add it to your order."
     )
 
 
-def test_cart_with_cookie_cannot_switch_to_thursday(app):
+def test_cart_with_restricted_item_cannot_switch_to_an_unconfigured_day(app):
     client = app.test_client()
     set_pickup(client, "2026-08-07T16:00:00-04:00")
     assert add_cookie(client).status_code == 201
@@ -126,20 +121,23 @@ def test_cart_with_cookie_cannot_switch_to_thursday(app):
         json={"service_at": "2026-08-06T16:00:00-04:00"},
         headers={"X-CSRF-Token": csrf(client)},
     )
+
     assert response.status_code == 409
+    assert "Chocolate Chip Cookie" in response.get_json()["error"]
 
 
-def test_stale_thursday_cookie_cart_is_blocked_before_checkout(app):
+def test_stale_cart_is_blocked_before_checkout(app):
     client = app.test_client()
     set_pickup(client, "2026-08-07T16:00:00-04:00")
     assert add_cookie(client).status_code == 201
     set_pickup(client, "2026-08-06T16:00:00-04:00")
     response = client.get("/checkout")
+
     assert response.status_code == 409
-    assert b"Cookies are available Friday through Sunday" in response.data
+    assert b"Chocolate Chip Cookie can only be ordered" in response.data
 
 
-def test_cookie_guard_skips_redundant_menu_lookup_for_cookie_free_cart(app):
+def test_slot_change_performs_only_the_routes_normal_menu_lookup(app):
     client = app.test_client()
     token = csrf(client)
     provider = app.extensions["menu_provider"]
@@ -152,5 +150,12 @@ def test_cookie_guard_skips_redundant_menu_lookup_for_cookie_free_cart(app):
     )
 
     assert response.status_code == 200
-    # The route performs one normal menu lookup; the Cookie guard adds none.
     assert provider.snapshot_calls == 1
+
+
+def test_client_script_disables_add_button_and_shows_clear_warning():
+    script = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
+
+    assert "updateMenuDayAvailability" in script
+    assert "itemAvailabilityMessage.hidden = false" in script
+    assert "Change your pickup day to add it to your order." in script

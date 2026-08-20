@@ -9,7 +9,6 @@ from flask import Flask, g
 from dotenv import load_dotenv
 
 from .capacity import DemoCapacityStore
-from .cookie_availability import install_cookie_availability
 from .gift_card_recovery import install_gift_card_recovery
 from .hosted_checkout_handoff import install_hosted_checkout_handoff
 from .menu import StaticMenuProvider
@@ -24,8 +23,8 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.34"
-SHARED_ASSET_VERSION = "0.18.32"
+APP_VERSION = "0.18.35"
+SHARED_ASSET_VERSION = "0.18.35"
 
 
 def _csv_setting(
@@ -319,7 +318,6 @@ def create_app(test_config: dict | None = None) -> Flask:
         g.csp_nonce = secrets.token_urlsafe(18)
 
     install_gift_card_recovery(app)
-    install_cookie_availability(app)
     install_hosted_checkout_handoff(app)
 
     @app.context_processor
