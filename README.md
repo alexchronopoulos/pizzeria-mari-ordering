@@ -2,10 +2,11 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.35 capabilities
+## Current v0.18.38 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
+- An interactive pickup-schedule generator that balances online dough-ball capacity between minimum and maximum 15-minute limits, supports separate walk-in and slice-pie reserves plus closed recovery periods, and combines multiple prompted days into ready-to-paste weekly JSON.
 - Configurable pizza-cart and overall-item limits.
 - Every pickup time shows its remaining pizza capacity; full times remain visible and clearly labeled instead of disappearing.
 - A saved pickup time is rechecked when the storefront or checkout page opens; if it has filled, the next available time is selected automatically.
@@ -187,6 +188,40 @@ that weekday or date. Weekdays and dates omitted from the JSON continue using
 the built-in schedule. All times must align to the 15-minute interval, windows
 cannot overlap, and configuration mistakes stop the app at startup with a clear
 error instead of publishing an unintended schedule.
+
+### Pickup schedule generator
+
+Run the interactive generator when you want to divide a day's dough balls among
+its 15-minute pickup times:
+
+```bash
+uv run python scripts/generate_pickup_schedule.py
+```
+
+For each weekday or specific date, enter the first and last pickup times, total
+dough balls, optional Walk-in Reserve and Slice Pie Reserve values, and the
+minimum and maximum online pizzas per pickup time. Both reserves default to
+zero, while the minimum defaults to 2 and the maximum defaults to 3. Press
+Enter to accept any default. The reserves are subtracted before online capacity is distributed. The generator
+spreads heavier periods apart whenever the total allows it. For example, 15
+online dough balls across six times with a minimum of 2 and maximum of 3
+produces `2, 3, 2, 3, 2, 3`. Use a minimum of `0` if actual closed 15-minute
+recovery periods are acceptable.
+
+After every day, answer the `Add another day?` prompt. When finished, the final
+line is one compact JSON object containing every entered weekday or date. It is
+ready to paste into DigitalOcean's `PICKUP_SCHEDULE` environment variable when
+those are the only overrides. If that variable already contains other overrides,
+merge the generated keys into the existing JSON object.
+
+The same utility can be run non-interactively:
+
+```bash
+uv run python scripts/generate_pickup_schedule.py \
+  --day thursday --start 16:00 --end 17:15 \
+  --dough-balls 20 --walk-in-reserve 2 --slice-pie-reserve 3 \
+  --min-per-slot 2 --max-per-slot 3
+```
 
 Cart and production thresholds are also configurable without editing source:
 

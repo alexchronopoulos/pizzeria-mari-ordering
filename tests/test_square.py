@@ -909,7 +909,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.35")
+    prepare_app_for_serving(square_app, version="0.18.38")
 
     def request_count(path: str) -> int:
         return sum(
