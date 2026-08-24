@@ -82,7 +82,7 @@ def test_restricted_item_remains_visible_and_has_client_side_day_data(app):
     assert 'data-item-id="weekend-cookie"' in page
     assert '"days_available": [4, 5, 6]' in page
     assert '"days_available_label": "Friday, Saturday, or Sunday"' in page
-    assert "/static/app.js?v=0.18.38" in page
+    assert "/static/app.js?v=0.18.40" in page
     assert "cookie-availability.js" not in page
 
 

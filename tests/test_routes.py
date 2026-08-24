@@ -35,7 +35,7 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     assert b"images/pizzeria-mari-logo-cream.png" in response.data
     assert b"<title>Pizzeria Mari Order Online</title>" in response.data
     assert b'rel="icon" type="image/png"' in response.data
-    assert b"/static/images/PM_icon_black.png?v=0.18.35" in response.data
+    assert b"/static/images/PM_icon_black.png?v=0.18.40" in response.data
     assert b"Order ahead" not in response.data
     assert b"Whole pies" not in response.data
     assert b"pizza spots" not in response.data
@@ -59,8 +59,8 @@ def test_menu_has_prominent_pickup_and_allowed_categories(app):
     ]
     assert "height: clamp(240px, 52dvh, 430px)" in detail_rules
     assert "background-size: cover" in detail_rules
-    assert b"/static/style.css?v=0.18.35" in response.data
-    assert b"/static/app.js?v=0.18.38" in response.data
+    assert b"/static/style.css?v=0.18.40" in response.data
+    assert b"/static/app.js?v=0.18.40" in response.data
 
     favicon = app.test_client().get("/static/images/PM_icon_black.png")
     assert favicon.status_code == 200
@@ -83,7 +83,7 @@ def test_health_is_lightweight_and_stays_healthy_when_ordering_is_paused():
     assert health.status_code == 200
     assert health.get_json() == {
         "status": "ok",
-        "version": "0.18.38",
+        "version": "0.18.40",
         "ordering_enabled": False,
     }
     assert health.headers["Cache-Control"] == "no-store"
@@ -329,6 +329,23 @@ def test_cart_quantity_controls_and_three_pizza_button_message_are_present(app):
     assert b'data-cart-action="decrease"' in checkout.data
     assert b"Add to order \xc2\xb7 ${data.pizzaLimit} pizza maximum" in javascript.data
     assert b"quantityUp.disabled = reachesPizzaLimit || reachesTotalLimit" in javascript.data
+
+
+def test_item_errors_stay_visible_with_the_sticky_add_button(app):
+    client = app.test_client()
+    menu = client.get("/").get_data(as_text=True)
+    css = client.get("/static/style.css").get_data(as_text=True)
+
+    actions_start = menu.index('<div class="item-modal-actions">')
+    actions_end = menu.index("</div>", actions_start)
+    actions = menu[actions_start:actions_end]
+
+    assert 'id="item-error" role="alert"' in actions
+    assert actions.index('id="item-error"') < actions.index('id="add-to-cart"')
+    assert ".item-modal-actions {" in css
+    assert "position: sticky;" in css[css.index(".item-modal-actions {"):]
+    assert "bottom: 0;" in css[css.index(".item-modal-actions {"):]
+    assert ".item-modal-actions .form-error { margin: 0;" in css
 
 
 def test_pickup_api_shows_remaining_pizzas_and_keeps_full_times_visible(app):

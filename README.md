@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.38 capabilities
+## Current v0.18.40 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -14,6 +14,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Cart additions and quantity changes reuse the menu and remaining capacity already shown to the customer instead of blocking on repeated Square reads.
 - Compagnon display type, Semplicita body type, Pizzeria Mari colors, and responsive layouts.
 - Quantity controls on the menu and checkout, with preventative limit feedback.
+- Item-dialog errors, including pickup-slot capacity warnings, stay directly above the fixed add button so they are immediately visible without scrolling.
 - Checkout collects required first name, last name, email, and phone fields with optional order notes.
 - Buyers can opt to remember those four contact fields in their current browser for faster future checkout; the data is never stored by the server.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.

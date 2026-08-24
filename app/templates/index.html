@@ -108,10 +108,12 @@
     <div id="item-additions"></div>
   </fieldset>
   <div id="item-modifier-groups"></div>
-  <p class="form-error" id="item-error" hidden></p>
-  <button class="button button-primary button-block" id="add-to-cart">
-    <span id="add-to-cart-label">Add to order</span><span id="item-price"></span>
-  </button>
+  <div class="item-modal-actions">
+    <p class="form-error" id="item-error" role="alert" hidden></p>
+    <button class="button button-primary button-block" id="add-to-cart">
+      <span id="add-to-cart-label">Add to order</span><span id="item-price"></span>
+    </button>
+  </div>
 </dialog>
 
 <script nonce="{{ csp_nonce }}">

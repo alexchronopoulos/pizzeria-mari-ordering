@@ -909,7 +909,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.38")
+    prepare_app_for_serving(square_app, version="0.18.40")
 
     def request_count(path: str) -> int:
         return sum(
@@ -1167,7 +1167,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.35" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.40" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript

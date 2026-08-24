@@ -320,7 +320,15 @@ a { color: inherit; }
 .placement-options button { min-height: 48px; padding: 6px 4px; background: white; border: 2px solid var(--ink); cursor: pointer; font-size: .78rem; font-weight: 800; }
 .placement-options button[aria-pressed="true"] { background: var(--yellow); box-shadow: 2px 2px 0 var(--ink); }
 .placement-options small { display: block; margin-top: 1px; font-size: .68rem; font-weight: 400; }
-.item-modal > .button { position: sticky; bottom: 0; gap: 0; border-width: 2px 0 0; }
+.item-modal-actions {
+  position: sticky;
+  z-index: 3;
+  bottom: 0;
+  background: var(--paper);
+  border-top: 2px solid var(--ink);
+}
+.item-modal-actions .form-error { margin: 0; border-bottom: 2px solid var(--ink); }
+.item-modal-actions > .button { width: 100%; gap: 0; border: 0; }
 .form-error { margin: 12px 22px; padding: 12px; color: var(--paper); background: var(--red); font-weight: 800; }
 
 .checkout-shell { width: min(1050px, calc(100% - 32px)); margin: 35px auto 80px; }
