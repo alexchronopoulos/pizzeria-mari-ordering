@@ -23,8 +23,8 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.40"
-SHARED_ASSET_VERSION = "0.18.40"
+APP_VERSION = "0.18.41"
+SHARED_ASSET_VERSION = "0.18.41"
 
 
 def _csv_setting(

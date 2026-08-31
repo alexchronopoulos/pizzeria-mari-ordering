@@ -220,6 +220,12 @@ class SquareClient:
         )
         return payload
 
+    def delete_payment_link(self, payment_link_id: str) -> dict:
+        return self.request(
+            "DELETE",
+            f"/v2/online-checkout/payment-links/{payment_link_id}",
+        )
+
     def create_order(self, request_body: dict) -> dict:
         return self.request(
             "POST",
@@ -1371,6 +1377,19 @@ class SquareCommerce:
             "payment": payment,
             "payments": payments,
         }
+
+    def cancel_hosted_checkout(
+        self, *, order_id: str, payment_link_id: str
+    ) -> str:
+        result = self.checkout_result(order_id)
+        if result["status"] in {"COMPLETED", "CANCELED"}:
+            return str(result["status"])
+        if result["status"] == "PENDING" and result["payments"]:
+            # A Payment object in a nonterminal state might still capture.
+            # Do not delete its link or invite a second charge.
+            return "PENDING"
+        self.client.delete_payment_link(payment_link_id)
+        return "CANCELED"
 
     @staticmethod
     def _payment_id(tender: dict) -> str | None:
