@@ -810,6 +810,16 @@ def api_checkout_quote():
 
 @storefront.route("/checkout", methods=["GET", "POST"])
 def checkout():
+    pending_hosted = _pending_hosted_checkout()
+    if pending_hosted is not None:
+        return redirect(
+            url_for(
+                "storefront.checkout_complete",
+                attempt=pending_hosted["attempt_id"],
+            ),
+            code=303 if request.method == "POST" else 302,
+        )
+
     if not current_app.config["ORDERING_ENABLED"]:
         return render_template("ordering_paused.html"), 503
 
@@ -1082,6 +1092,81 @@ def _pending_matches_attempt(pending: object, attempt_id: str) -> bool:
     )
 
 
+def _pending_hosted_checkout() -> dict | None:
+    pending = session.get("pending_square_checkout")
+    if not isinstance(pending, dict) or pending.get("mode") != "hosted":
+        return None
+    if not all(
+        pending.get(field)
+        for field in ("attempt_id", "order_id", "payment_link_id", "checkout_url")
+    ):
+        return None
+    return pending
+
+
+@storefront.post("/checkout/cancel")
+def cancel_hosted_checkout():
+    _require_csrf()
+    pending = _pending_hosted_checkout()
+    attempt_id = request.form.get("attempt", "")
+    if pending is None or not _pending_matches_attempt(pending, attempt_id):
+        return redirect(url_for("storefront.checkout"), code=303)
+
+    commerce = current_app.extensions["square_commerce"]
+    try:
+        status = commerce.cancel_hosted_checkout(
+            order_id=str(pending["order_id"]),
+            payment_link_id=str(pending["payment_link_id"]),
+        )
+    except SquareAPIError as exc:
+        log_event(
+            current_app.logger,
+            "hosted_checkout_cancel_failed",
+            level=logging.WARNING,
+            checkout_attempt_id=attempt_id,
+            square_order_id=str(pending["order_id"]),
+            error_type=type(exc).__name__,
+            ambiguous=exc.ambiguous,
+        )
+        return render_template(
+            "payment_pending.html",
+            pending=pending,
+            selected=datetime.fromisoformat(pending["service_at"]),
+            csrf_token=_csrf_token(),
+            status_check_error=True,
+            cancel_available=False,
+        ), 503
+
+    if status == "COMPLETED":
+        return redirect(
+            url_for("storefront.checkout_complete", attempt=attempt_id),
+            code=303,
+        )
+    if status == "PENDING":
+        return render_template(
+            "payment_pending.html",
+            pending=pending,
+            selected=datetime.fromisoformat(pending["service_at"]),
+            csrf_token=_csrf_token(),
+            status_check_error=False,
+            cancel_available=False,
+        ), 202
+
+    session.pop("pending_square_checkout", None)
+    session["checkout_error"] = (
+        "Your previous Square payment attempt was canceled. "
+        "Your cart and pickup time are unchanged."
+    )
+    session.modified = True
+    log_event(
+        current_app.logger,
+        "hosted_checkout_canceled",
+        checkout_attempt_id=attempt_id,
+        square_order_id=str(pending["order_id"]),
+    )
+    return redirect(url_for("storefront.checkout"), code=303)
+
+
 @storefront.get("/checkout/gift-card")
 def gift_card_checkout():
     pending = session.get("pending_square_checkout")
@@ -1233,7 +1318,26 @@ def checkout_complete():
     if payment_mode == "gift_card":
         result = commerce.gift_card_checkout_state(str(pending["order_id"]))
     else:
-        result = commerce.checkout_result(str(pending["order_id"]))
+        try:
+            result = commerce.checkout_result(str(pending["order_id"]))
+        except SquareAPIError as exc:
+            log_event(
+                current_app.logger,
+                "hosted_checkout_status_failed",
+                level=logging.WARNING,
+                checkout_attempt_id=attempt_id,
+                square_order_id=str(pending["order_id"]),
+                error_type=type(exc).__name__,
+                ambiguous=exc.ambiguous,
+            )
+            return render_template(
+                "payment_pending.html",
+                pending=pending,
+                selected=datetime.fromisoformat(pending["service_at"]),
+                csrf_token=_csrf_token(),
+                status_check_error=True,
+                cancel_available=False,
+            ), 503
     if result["status"] in {"CANCELED", "FAILED"}:
         session.pop("pending_square_checkout", None)
         session.modified = True
@@ -1252,6 +1356,8 @@ def checkout_complete():
             pending=pending,
             selected=datetime.fromisoformat(pending["service_at"]),
             csrf_token=_csrf_token(),
+            status_check_error=False,
+            cancel_available=not result["payments"],
         ), 202
 
     order_data = result["order"]

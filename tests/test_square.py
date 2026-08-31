@@ -207,6 +207,7 @@ class SquareFixture:
         self.requests: list[httpx.Request] = []
         self.orders = orders or []
         self.canceled = False
+        self.deleted_payment_links: list[str] = []
         self.created_order: dict | None = None
         self.payment_status = "PENDING"
         self.order_state_override: str | None = None
@@ -428,6 +429,21 @@ class SquareFixture:
                         "url": "https://sandbox.square.link/u/test-checkout",
                     },
                     "related_resources": {"orders": [self.created_order]},
+                },
+            )
+        if (
+            request.method == "DELETE"
+            and request.url.path
+            == "/v2/online-checkout/payment-links/PAYMENT_LINK"
+        ):
+            self.deleted_payment_links.append("PAYMENT_LINK")
+            if self.created_order:
+                self.created_order["state"] = "CANCELED"
+            return httpx.Response(
+                200,
+                json={
+                    "id": "PAYMENT_LINK",
+                    "cancelled_order_id": "SQUARE_ORDER_12345678",
                 },
             )
         if request.method == "GET" and request.url.path == "/v2/orders/SQUARE_ORDER_12345678":
@@ -909,7 +925,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.40")
+    prepare_app_for_serving(square_app, version="0.18.41")
 
     def request_count(path: str) -> int:
         return sum(
@@ -1129,6 +1145,8 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     checkout = client.get("/checkout")
     assert checkout.status_code == 200
     assert b"Secure Checkout on Square" in checkout.data
+    assert b"Your order is placed only after payment succeeds" in checkout.data
+    assert b"billing ZIP" in checkout.data
     assert b"before tip" not in checkout.data
     assert b"Choose on Square" not in checkout.data
     assert b"<span>Tip</span>" not in checkout.data
@@ -1167,7 +1185,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.40" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.41" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript
@@ -1275,6 +1293,195 @@ def test_unsuccessful_hosted_payment_gets_clear_notice_and_preserves_cart(
     retry = client.get("/checkout")
     assert retry.status_code == 200
     assert b"Who is picking up?" in retry.data
+
+
+def test_returning_to_checkout_recovers_declined_hosted_payment(square_app):
+    client = square_app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    submitted = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "verification_total_cents": "2808",
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+    assert submitted.status_code == 303
+    square_app.square_fixture.order_state_override = "OPEN"
+    square_app.square_fixture.payment_status = "FAILED"
+
+    recovered = client.get("/checkout", follow_redirects=True)
+
+    assert recovered.status_code == 200
+    assert b"Payment unsuccessful" in recovered.data
+    assert b"Your order was not placed" in recovered.data
+    with client.session_transaction() as browser_session:
+        assert browser_session["cart"]
+        assert "pending_square_checkout" not in browser_session
+
+
+def test_pending_hosted_payment_can_be_canceled_before_retry(square_app):
+    client = square_app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    submitted = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "verification_total_cents": "2808",
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+    assert submitted.status_code == 303
+    with client.session_transaction() as browser_session:
+        attempt_id = browser_session["pending_square_checkout"]["attempt_id"]
+    pending = client.get("/checkout", follow_redirects=True)
+    assert pending.status_code == 202
+    assert b"Your payment is not confirmed yet" in pending.data
+    assert b"Cancel this attempt and return to checkout" in pending.data
+
+    canceled = client.post(
+        "/checkout/cancel",
+        data={"csrf_token": token, "attempt": attempt_id},
+        follow_redirects=True,
+    )
+
+    assert canceled.status_code == 200
+    assert b"Your previous Square payment attempt was canceled" in canceled.data
+    assert square_app.square_fixture.deleted_payment_links == ["PAYMENT_LINK"]
+    with client.session_transaction() as browser_session:
+        assert browser_session["cart"]
+        assert "pending_square_checkout" not in browser_session
+
+
+def test_processing_hosted_payment_cannot_be_canceled_or_replaced(square_app):
+    client = square_app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    submitted = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "verification_total_cents": "2808",
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+    assert submitted.status_code == 303
+    with client.session_transaction() as browser_session:
+        attempt_id = browser_session["pending_square_checkout"]["attempt_id"]
+    square_app.square_fixture.order_state_override = "OPEN"
+
+    pending = client.get("/checkout", follow_redirects=True)
+    assert pending.status_code == 202
+    assert b"Cancel this attempt" not in pending.data
+
+    refused = client.post(
+        "/checkout/cancel",
+        data={"csrf_token": token, "attempt": attempt_id},
+    )
+
+    assert refused.status_code == 202
+    assert square_app.square_fixture.deleted_payment_links == []
+    with client.session_transaction() as browser_session:
+        assert browser_session["cart"]
+        assert "pending_square_checkout" in browser_session
+
+
+def test_returning_to_checkout_recovers_completed_hosted_payment(square_app):
+    client = square_app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    submitted = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "verification_total_cents": "2808",
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+    assert submitted.status_code == 303
+    square_app.square_fixture.payment_status = "COMPLETED"
+
+    recovered = client.get("/checkout", follow_redirects=True)
+
+    assert recovered.status_code == 200
+    assert b"Thanks, Alex Customer" in recovered.data
+    with client.session_transaction() as browser_session:
+        assert "cart" not in browser_session
+        assert "pending_square_checkout" not in browser_session
+
+
+def test_unknown_hosted_payment_status_blocks_a_duplicate_order(
+    square_app, monkeypatch
+):
+    client = square_app.test_client()
+    token = csrf(client)
+    client.post(
+        "/api/cart",
+        json={"item_id": "VAR_PLAIN", "quantity": 1},
+        headers={"X-CSRF-Token": token},
+    )
+    submitted = client.post(
+        "/checkout",
+        data={
+            "csrf_token": token,
+            "verification_total_cents": "2808",
+            "first_name": "Alex",
+            "last_name": "Customer",
+            "email": "alex@example.com",
+            "phone": "5185550100",
+        },
+    )
+    assert submitted.status_code == 303
+
+    def unavailable(_order_id: str):
+        raise SquareAPIError(
+            "Square could not be reached. Please try again.",
+            ambiguous=True,
+        )
+
+    monkeypatch.setattr(
+        square_app.extensions["square_commerce"],
+        "checkout_result",
+        unavailable,
+    )
+    recovered = client.get("/checkout", follow_redirects=True)
+
+    assert recovered.status_code == 503
+    assert b"Do not submit a new order" in recovered.data
+    assert b"Check payment status" in recovered.data
+    with client.session_transaction() as browser_session:
+        assert browser_session["cart"]
+        assert "pending_square_checkout" in browser_session
 
 
 def test_hosted_checkout_accepts_a_remembered_e164_us_phone(square_app):
@@ -1521,7 +1728,7 @@ def test_unfinished_gift_card_order_does_not_consume_displayed_capacity():
     assert app.square_fixture.created_order["state"] == "OPEN"
 
 
-def test_abandoned_hosted_checkout_does_not_block_a_fresh_checkout_page():
+def test_abandoned_hosted_checkout_is_recovered_before_a_fresh_checkout():
     fixture = SquareFixture()
     app = create_app(
         {
@@ -1573,8 +1780,10 @@ def test_abandoned_hosted_checkout_does_not_block_a_fresh_checkout_page():
     assert b"Cancel Square checkout" not in pending.data
 
     fresh = client.get("/checkout")
-    assert fresh.status_code == 200
-    assert b"Who is picking up?" in fresh.data
+    assert fresh.status_code == 302
+    assert fresh.headers["Location"] == (
+        f"/checkout/complete?attempt={attempt_id}"
+    )
     assert fixture.canceled is False
 
 

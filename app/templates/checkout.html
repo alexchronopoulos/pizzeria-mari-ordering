@@ -90,6 +90,7 @@
               <input type="radio" name="payment_method" value="hosted" {% if payment_method != 'gift_card' %}checked{% endif %}>
               <span>
                 <strong>Secure Checkout on Square</strong>
+                <small>Your order is placed only after payment succeeds and you see the Pizzeria Mari confirmation page. If Square declines your card, verify the card details and billing ZIP, try another card, or contact your card issuer.</small>
               </span>
             </label>
             {% if gift_cards_enabled %}

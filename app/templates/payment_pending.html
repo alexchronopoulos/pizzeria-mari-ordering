@@ -6,10 +6,22 @@
   <span class="eyebrow">Square checkout</span>
   <h1>Your payment is not confirmed yet.</h1>
   <p class="confirmation-time">This checkout is for pickup <strong>{{ selected.strftime('%A, %B %-d at %-I:%M %p') }}</strong>.</p>
-  <p>If you just paid, Square may still be finishing the order. Check again in a moment. Otherwise, return to the secure Square page to complete payment.</p>
+  {% if status_check_error %}
+    <p class="form-error">We could not confirm the payment with Square. Do not submit a new order; check this payment again in a moment.</p>
+  {% else %}
+    <p>If you just paid, Square may still be finishing the order. Check again in a moment. Otherwise, return to the secure Square page to complete payment.</p>
+  {% endif %}
+  <p>If Square declined your card, verify the card number, expiration date, CVV, and billing ZIP. You can also try another card or contact your card issuer.</p>
   <div class="pending-actions">
     <a class="button button-primary" href="{{ pending.checkout_url }}">Return to Square</a>
     <a class="button button-light" href="{{ url_for('storefront.checkout_complete', attempt=pending.attempt_id) }}">Check payment status</a>
+    {% if cancel_available %}
+      <form method="post" action="{{ url_for('storefront.cancel_hosted_checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="attempt" value="{{ pending.attempt_id }}">
+        <button class="text-button" type="submit">Cancel this attempt and return to checkout</button>
+      </form>
+    {% endif %}
   </div>
 </main>
 {% endblock %}
