@@ -123,7 +123,10 @@
     "pizzaLimit": pizza_limit,
     "totalLimit": total_limit,
     "selectedDate": selected.iso[:10] if selected else none,
-    "slotsByDate": slots_by_date
+    "slotsByDate": slots_by_date,
+    "specialServiceDates": special_service_dates,
+    "specialServiceCategories": special_service_categories,
+    "specialServiceCategoryLabel": special_service_category_label
   }|tojson }};
 </script>
 <script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='app.js', v=storefront_asset_version) }}" defer></script>

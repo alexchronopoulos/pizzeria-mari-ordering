@@ -15,6 +15,10 @@ from .menu import StaticMenuProvider
 from .operations import configure_structured_logging
 from .routes import storefront
 from .scheduling import parse_pickup_schedule
+from .special_service import (
+    parse_special_service_categories,
+    parse_special_service_dates,
+)
 from .square import (
     SQUARE_API_VERSION,
     SquareCatalogProvider,
@@ -23,8 +27,8 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.41"
-SHARED_ASSET_VERSION = "0.18.41"
+APP_VERSION = "0.18.42"
+SHARED_ASSET_VERSION = "0.18.42"
 
 
 def _csv_setting(
@@ -101,6 +105,16 @@ def create_app(test_config: dict | None = None) -> Flask:
             environment.get("PIZZA_SLOT_CAPACITY", "3"), "PIZZA_SLOT_CAPACITY"
         ),
         PICKUP_SCHEDULE=environment.get("PICKUP_SCHEDULE", "").strip(),
+        SPECIAL_SERVICE_DATES=_csv_setting(
+            environment,
+            "SPECIAL_SERVICE_DATES",
+            "",
+        ),
+        SPECIAL_SERVICE_CATEGORIES=_csv_setting(
+            environment,
+            "SPECIAL_SERVICE_CATEGORIES",
+            "",
+        ),
         CART_TOTAL_LIMIT=_positive_integer(
             environment.get("CART_TOTAL_LIMIT", "8"), "CART_TOTAL_LIMIT"
         ),
@@ -174,6 +188,19 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config.get("PICKUP_SCHEDULE", ""),
         app.config["SLOT_INTERVAL_MINUTES"],
     )
+    app.config["SPECIAL_SERVICE_DATES"] = parse_special_service_dates(
+        app.config.get("SPECIAL_SERVICE_DATES", ())
+    )
+    app.config["SPECIAL_SERVICE_CATEGORIES"] = parse_special_service_categories(
+        app.config.get("SPECIAL_SERVICE_CATEGORIES", ())
+    )
+    if bool(app.config["SPECIAL_SERVICE_DATES"]) != bool(
+        app.config["SPECIAL_SERVICE_CATEGORIES"]
+    ):
+        raise RuntimeError(
+            "SPECIAL_SERVICE_DATES and SPECIAL_SERVICE_CATEGORIES must be "
+            "configured together."
+        )
     configured_capacities = [
         window[2]
         for windows in app.config["PICKUP_SCHEDULE"].values()
@@ -296,8 +323,12 @@ def create_app(test_config: dict | None = None) -> Flask:
             allowed_category_names=_unique_values(
                 tuple(app.config["SQUARE_ALLOWED_CATEGORY_NAMES"]),
                 tuple(app.config["SQUARE_ADDITIONAL_CATEGORY_NAMES"]),
+                tuple(app.config["SPECIAL_SERVICE_CATEGORIES"]),
             ),
-            pizza_category_names=tuple(app.config["SQUARE_PIZZA_CATEGORY_NAMES"]),
+            pizza_category_names=_unique_values(
+                tuple(app.config["SQUARE_PIZZA_CATEGORY_NAMES"]),
+                tuple(app.config["SPECIAL_SERVICE_CATEGORIES"]),
+            ),
             excluded_modifier_list_names=tuple(
                 app.config["SQUARE_EXCLUDED_MODIFIER_LIST_NAMES"]
             ),

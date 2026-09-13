@@ -30,6 +30,8 @@ PIZZA_CART_LIMIT=3
 PIZZA_SLOT_CAPACITY=3
 CART_TOTAL_LIMIT=8
 PICKUP_SCHEDULE=
+SPECIAL_SERVICE_DATES=
+SPECIAL_SERVICE_CATEGORIES=
 ```
 
 Keep `SECRET_KEY` unchanged across deployments. Leave `ORDERING_ENABLED=false` through private Production testing.
@@ -38,6 +40,10 @@ Keep `SECRET_KEY` unchanged across deployments. Leave `ORDERING_ENABLED=false` t
 `.env` quote characters. The complete format and examples are in `README.md`.
 Changing it creates a new deployment; verify the displayed pickup days, times,
 and capacities before setting `ORDERING_ENABLED=true`.
+
+`SPECIAL_SERVICE_DATES` and `SPECIAL_SERVICE_CATEGORIES` are also optional, but
+must be configured together. The complete setup and September 21 Pizza Friends
+example are in `README.md`.
 
 ## 3. Keep DNS in Route 53
 
@@ -62,7 +68,7 @@ Check health:
 curl --fail --show-error https://order.pizzeriamari.com/health
 ```
 
-It should report version `0.18.41` and `ordering_enabled: false`. The home page should show the Square fallback link.
+It should report version `0.18.42` and `ordering_enabled: false`. The home page should show the Square fallback link.
 
 Then run the Sandbox test matrix and these controlled Production transactions at the unadvertised URL:
 

@@ -43,10 +43,41 @@
     };
   };
 
+  const specialServiceAvailability = (item) => {
+    if (
+      !Array.isArray(data.specialServiceDates)
+      || !data.specialServiceDates.includes(data.selectedDate)
+    ) {
+      return null;
+    }
+    return {
+      allowed: Array.isArray(data.specialServiceCategories)
+        && data.specialServiceCategories.includes(item?.category_label),
+      label: data.specialServiceCategoryLabel || 'the special menu',
+    };
+  };
+
+  const selectedDateLabel = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.selectedDate || '')) {
+      return 'that date';
+    }
+    return new Date(`${data.selectedDate}T12:00:00`).toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    });
+  };
+
   const updateMenuDayAvailability = () => {
     document.querySelectorAll('.menu-card').forEach((card) => {
       const item = data.menu?.[card.dataset.itemId];
-      const availability = dayAvailability(item);
+      const dayRule = dayAvailability(item);
+      const specialRule = specialServiceAvailability(item);
+      const availability = specialRule && !specialRule.allowed
+        ? { allowed: false, message: 'Special menu only for this pickup date' }
+        : (dayRule && !dayRule.allowed
+          ? { allowed: false, message: `Pickup ${dayRule.label} only` }
+          : null);
       let notice = card.querySelector('[data-day-availability]');
       if (!availability || availability.allowed) {
         if (notice) notice.hidden = true;
@@ -58,7 +89,7 @@
         notice.dataset.dayAvailability = '';
         card.querySelector('.menu-card-copy')?.append(notice);
       }
-      notice.textContent = `Pickup ${availability.label} only`;
+      notice.textContent = availability.message;
       notice.hidden = false;
     });
   };
@@ -198,6 +229,7 @@
       && pizzaCount + quantity >= data.pizzaLimit;
     const reachesTotalLimit = itemCount + quantity >= data.totalLimit;
     const availability = dayAvailability(activeItem);
+    const specialAvailability = specialServiceAvailability(activeItem);
 
     button.disabled = false;
     button.classList.remove('button-limit');
@@ -228,7 +260,16 @@
       button.classList.add('button-limit');
     }
 
-    if (availability && !availability.allowed) {
+    if (specialAvailability && !specialAvailability.allowed) {
+      itemAvailabilityMessage.textContent = `Only items from ${specialAvailability.label} are available for pickup on ${selectedDateLabel()}. Change your pickup day to add ${activeItem.name} to your order.`;
+      itemAvailabilityMessage.hidden = false;
+      label.textContent = 'Special menu only for this pickup date';
+      price.hidden = true;
+      button.disabled = true;
+      button.classList.add('button-limit');
+      quantityUp.disabled = true;
+      quantityUp.title = 'Special menu only for this pickup date';
+    } else if (availability && !availability.allowed) {
       itemAvailabilityMessage.textContent = `${activeItem.name} can only be ordered for pickup on ${availability.label}. Change your pickup day to add it to your order.`;
       itemAvailabilityMessage.hidden = false;
       label.textContent = `Available ${availability.label} only`;
