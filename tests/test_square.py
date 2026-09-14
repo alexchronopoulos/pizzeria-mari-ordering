@@ -14,7 +14,18 @@ from app.square import SquareAPIError
 from app.startup_performance import prepare_app_for_serving
 
 
-def catalog_objects() -> list[dict]:
+def catalog_objects(*, include_special_menu: bool = False) -> list[dict]:
+    category_values = [
+        ("CAT_SEASONAL", "Seasonal Special Pies"),
+        ("CAT_TRADITIONAL", "Traditional Pies"),
+        ("CAT_MARI", "Mari Pies"),
+        ("CAT_SIDES", "Sides"),
+        ("CAT_DESSERTS", "Desserts"),
+        ("CAT_SALADS", "Salads"),
+        ("CAT_DRINKS", "Drinks"),
+    ]
+    if include_special_menu:
+        category_values.append(("CAT_PIZZA_FRIENDS", "Pizza Friends"))
     categories = [
         {
             "type": "CATEGORY",
@@ -24,15 +35,7 @@ def catalog_objects() -> list[dict]:
                 "category_type": "REGULAR_CATEGORY",
             },
         }
-        for category_id, name in (
-            ("CAT_SEASONAL", "Seasonal Special Pies"),
-            ("CAT_TRADITIONAL", "Traditional Pies"),
-            ("CAT_MARI", "Mari Pies"),
-            ("CAT_SIDES", "Sides"),
-            ("CAT_DESSERTS", "Desserts"),
-            ("CAT_SALADS", "Salads"),
-            ("CAT_DRINKS", "Drinks"),
-        )
+        for category_id, name in category_values
     ]
 
     def modifier_list(list_id: str, name: str, modifier_id: str, price: int):
@@ -199,7 +202,20 @@ def catalog_objects() -> list[dict]:
         simple_item("ITEM_SALAD", "VAR_SALAD", "Cucumber Salad", "CAT_SALADS", 1200),
         simple_item("ITEM_DRINK", "VAR_DRINK", "Sparkling Water", "CAT_DRINKS", 300),
     ]
-    return [*categories, *modifiers, image, item, *non_pizza_items]
+    special_items = (
+        [
+            simple_item(
+                "ITEM_PIZZA_FRIENDS",
+                "VAR_PIZZA_FRIENDS",
+                "Collaboration Pie",
+                "CAT_PIZZA_FRIENDS",
+                3800,
+            )
+        ]
+        if include_special_menu
+        else []
+    )
+    return [*categories, *modifiers, image, item, *non_pizza_items, *special_items]
 
 
 class SquareFixture:
@@ -217,9 +233,12 @@ class SquareFixture:
         self.inventory_aliases: dict[str, str] = {}
         self.inventory_error = False
         self.day_availability: dict[str, tuple[str, ...]] = {}
+        self.include_special_menu = False
 
     def _catalog_objects(self) -> list[dict]:
-        objects = catalog_objects()
+        objects = catalog_objects(
+            include_special_menu=self.include_special_menu
+        )
         if self.day_availability:
             day_names = (
                 "Monday",
@@ -682,6 +701,36 @@ def test_square_catalog_drives_items_images_and_modifier_groups(square_app):
     assert item.modifier_groups[0].max_selected is None
 
 
+def test_special_service_category_is_published_and_consumes_slot_capacity():
+    fixture = SquareFixture()
+    fixture.include_special_menu = True
+    configured = create_app(
+        {
+            "TESTING": True,
+            "DEMO_MODE": False,
+            "SECRET_KEY": "test-secret-not-for-production",
+            "PUBLIC_BASE_URL": "https://orders.example.test",
+            "SQUARE_LOCATION_ID": "LOCATION",
+            "SQUARE_ACCESS_TOKEN": "test-token-not-a-real-secret",
+            "SQUARE_HTTP_TRANSPORT": httpx.MockTransport(fixture),
+            "SPECIAL_SERVICE_DATES": "2026-09-21",
+            "SPECIAL_SERVICE_CATEGORIES": "Pizza Friends",
+            "TEST_NOW": datetime(
+                2026, 9, 14, 12, tzinfo=ZoneInfo("America/New_York")
+            ),
+        }
+    )
+
+    snapshot = configured.extensions["menu_provider"].snapshot()
+    item = snapshot.items_by_id["VAR_PIZZA_FRIENDS"]
+
+    assert item.category_label == "Pizza Friends"
+    assert item.capacity_category == "pizza"
+    assert sum(
+        request.url.path == "/v2/catalog/list" for request in fixture.requests
+    ) == 1
+
+
 def test_square_inventory_displays_one_through_four_as_low_stock(square_app):
     square_app.square_fixture.inventory_counts.update(
         {
@@ -925,7 +974,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.41")
+    prepare_app_for_serving(square_app, version="0.18.42")
 
     def request_count(path: str) -> int:
         return sum(
@@ -1185,7 +1234,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.41" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.42" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript

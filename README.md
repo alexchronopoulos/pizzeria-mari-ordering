@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.41 capabilities
+## Current v0.18.42 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -19,6 +19,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Buyers can opt to remember those four contact fields in their current browser for faster future checkout; the data is never stored by the server.
 - Square Catalog categories, items, variations, descriptions, prices, images, sold-out state, and modifier lists.
 - Optional `Days_Available` multi-select Item attribute from Square. Restricted items remain visible every day, show a clear pickup-day warning, and cannot be added or checked out for an unconfigured day. Items without the attribute remain unrestricted, and the attribute is loaded in the existing catalog request.
+- Optional special-service dates that keep the complete menu visible but allow only configured Square categories to be added or purchased on those dates. Special categories are loaded in the existing catalog request and consume normal pizza-slot capacity.
 - Square inventory-aware availability. Every menu item with a positive Square inventory count of one through four shows a visible `Low stock · 2 left` badge on its card and item dialog, even if Square omits the catalog tracking flag. An explicitly tracked zero count is unavailable, while five or more has no warning. The remaining quantity is enforced in the cart and rechecked before checkout.
 - Large square menu photography with a pizza-centered focal crop and no image border; the complete item card has a border. Item details show a larger uncropped image above the item name.
 - One compact Additions picker whose visible options come from Square's Whole Pie Additions list. Whole, first-half, and second-half choices resolve to the matching option and price in their respective Square lists.
@@ -134,6 +135,40 @@ Restricted items stay visible on the menu. On an unconfigured pickup day the car
 shows the allowed days, the item dialog explains how to change the pickup day, and
 the add button is disabled. The server repeats the same validation when an item is
 added, a cart's pickup day is changed, its quantity is changed, and checkout opens.
+
+### Special-service menus
+
+Configure `SPECIAL_SERVICE_DATES` and `SPECIAL_SERVICE_CATEGORIES` together to
+run an exclusive menu on one or more individual pickup dates. Dates use
+`YYYY-MM-DD`; categories use exact Square category names. Both settings accept
+comma-separated lists.
+
+For the Pizza Friends service on Monday, September 21, 2026:
+
+```dotenv
+SPECIAL_SERVICE_DATES=2026-09-21
+SPECIAL_SERVICE_CATEGORIES=Pizza Friends
+```
+
+Every menu item remains visible on a special-service date, but only items in the
+configured categories can be added to the cart or checked out. The same rule is
+enforced when a customer changes pickup dates or returns with a stale cart.
+Configured special categories are automatically included in the published Square
+catalog categories and treated as pizzas for cart and pickup-slot capacity.
+
+Use the existing Square `Days_Available` attribute to control when each special
+item itself can be ordered. For this service, assign Monday to each Pizza Friends
+Item. Use a date override in `PICKUP_SCHEDULE` to open Monday and define its hours
+and per-slot capacity; the special-service settings do not create pickup times.
+
+```dotenv
+PICKUP_SCHEDULE='{"2026-09-21":[{"start":"16:00","end":"20:00","pizzas":3}]}'
+```
+
+The two special-service settings must both be empty or both contain values. A bad
+date or incomplete pairing stops the app at startup rather than publishing the
+wrong menu. Remove the date after the event or leave it in place; once that date
+falls outside the ordering window it has no effect.
 
 Catalog and inventory results are joined and held in process memory for 30 seconds by default to keep page loads fast. They are never written to disk. Cart and checkout validation use the inventory count only when Square has enabled tracking for that variation at the configured location:
 

@@ -35,6 +35,12 @@ from .scheduling import (
     pickup_slot_capacity,
     pickup_slots_for_date,
 )
+from .special_service import (
+    cart_special_service_error,
+    format_special_service_categories,
+    item_special_service_error,
+    service_date,
+)
 from .square import SquareAPIError, SquareConfigurationError, new_attempt_id
 
 
@@ -96,6 +102,48 @@ def _require_csrf() -> None:
 
 def _cart() -> list[dict]:
     return list(session.get("cart", []))
+
+
+def _item_pickup_availability_error(
+    item: MenuItem,
+    service_at: object,
+) -> str | None:
+    special_error = item_special_service_error(
+        item,
+        service_date(service_at),
+        current_app.config["SPECIAL_SERVICE_DATES"],
+        current_app.config["SPECIAL_SERVICE_CATEGORIES"],
+    )
+    if special_error:
+        return special_error
+    weekday = (
+        service_at.weekday()
+        if isinstance(service_at, datetime)
+        else service_weekday(service_at)
+    )
+    return item_day_availability_error(item, weekday)
+
+
+def _cart_pickup_availability_error(
+    lines: list[dict],
+    items_by_id: dict[str, MenuItem],
+    service_at: object,
+) -> str | None:
+    special_error = cart_special_service_error(
+        lines,
+        items_by_id,
+        service_date(service_at),
+        current_app.config["SPECIAL_SERVICE_DATES"],
+        current_app.config["SPECIAL_SERVICE_CATEGORIES"],
+    )
+    if special_error:
+        return special_error
+    weekday = (
+        service_at.weekday()
+        if isinstance(service_at, datetime)
+        else service_weekday(service_at)
+    )
+    return cart_day_availability_error(lines, items_by_id, weekday)
 
 
 def _save_cart(lines: list[dict]) -> None:
@@ -584,6 +632,16 @@ def index():
         cart_payload=_cart_payload(_cart(), menu.items_by_id),
         pizza_limit=current_app.config["CATEGORY_LIMITS"]["pizza"],
         total_limit=current_app.config["CART_TOTAL_LIMIT"],
+        special_service_dates=sorted(
+            day.isoformat()
+            for day in current_app.config["SPECIAL_SERVICE_DATES"]
+        ),
+        special_service_categories=current_app.config[
+            "SPECIAL_SERVICE_CATEGORIES"
+        ],
+        special_service_category_label=format_special_service_categories(
+            current_app.config["SPECIAL_SERVICE_CATEGORIES"]
+        ),
     )
 
 
@@ -627,8 +685,8 @@ def api_select_slot():
         return jsonify({"error": "That pickup time is no longer available."}), 400
 
     menu = _menu(allow_stale=True)
-    availability_error = cart_day_availability_error(
-        _cart(), menu.items_by_id, selected.weekday()
+    availability_error = _cart_pickup_availability_error(
+        _cart(), menu.items_by_id, selected
     )
     if availability_error:
         return jsonify({"error": availability_error}), 409
@@ -666,8 +724,8 @@ def api_add_to_cart():
     item = items_by_id.get(data.get("item_id"))
     if not item or not item.available:
         return jsonify({"error": "That item is not currently available."}), 400
-    availability_error = item_day_availability_error(
-        item, service_weekday(session.get("service_at"))
+    availability_error = _item_pickup_availability_error(
+        item, session.get("service_at")
     )
     if availability_error:
         return jsonify({"error": availability_error}), 409
@@ -747,10 +805,10 @@ def api_update_cart_quantity(line_id: str):
         {**line, "quantity": quantity} if line["id"] == line_id else line
         for line in lines
     ]
-    availability_error = cart_day_availability_error(
+    availability_error = _cart_pickup_availability_error(
         updated_lines,
         items_by_id,
-        service_weekday(session.get("service_at")),
+        session.get("service_at"),
     )
     if availability_error:
         return jsonify({"error": availability_error}), 409
@@ -840,8 +898,8 @@ def checkout():
     if not selected:
         return redirect(url_for("storefront.index"))
 
-    availability_error = cart_day_availability_error(
-        lines, items_by_id, selected.weekday()
+    availability_error = _cart_pickup_availability_error(
+        lines, items_by_id, selected
     )
     if availability_error:
         return render_template(
