@@ -321,9 +321,9 @@ def create_app(test_config: dict | None = None) -> Flask:
             client=client,
             location_id=app.config["SQUARE_LOCATION_ID"],
             allowed_category_names=_unique_values(
+                tuple(app.config["SPECIAL_SERVICE_CATEGORIES"]),
                 tuple(app.config["SQUARE_ALLOWED_CATEGORY_NAMES"]),
                 tuple(app.config["SQUARE_ADDITIONAL_CATEGORY_NAMES"]),
-                tuple(app.config["SPECIAL_SERVICE_CATEGORIES"]),
             ),
             pizza_category_names=_unique_values(
                 tuple(app.config["SQUARE_PIZZA_CATEGORY_NAMES"]),
