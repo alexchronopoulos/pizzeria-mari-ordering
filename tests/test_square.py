@@ -726,6 +726,7 @@ def test_special_service_category_is_published_and_consumes_slot_capacity():
 
     assert item.category_label == "Pizza Friends"
     assert item.capacity_category == "pizza"
+    assert snapshot.groups[0]["label"] == "Pizza Friends"
     assert sum(
         request.url.path == "/v2/catalog/list" for request in fixture.requests
     ) == 1

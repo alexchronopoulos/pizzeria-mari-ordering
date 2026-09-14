@@ -154,7 +154,9 @@ Every menu item remains visible on a special-service date, but only items in the
 configured categories can be added to the cart or checked out. The same rule is
 enforced when a customer changes pickup dates or returns with a stale cart.
 Configured special categories are automatically included in the published Square
-catalog categories and treated as pizzas for cart and pickup-slot capacity.
+catalog categories, displayed above the standard categories, and treated as pizzas
+for cart and pickup-slot capacity. Multiple special categories retain the order
+listed in `SPECIAL_SERVICE_CATEGORIES`.
 
 Use the existing Square `Days_Available` attribute to control when each special
 item itself can be ordered. For this service, assign Monday to each Pizza Friends
