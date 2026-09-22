@@ -27,8 +27,8 @@ from .square import (
 )
 
 
-APP_VERSION = "0.18.42"
-SHARED_ASSET_VERSION = "0.18.42"
+APP_VERSION = "0.18.43"
+SHARED_ASSET_VERSION = "0.18.43"
 
 
 def _csv_setting(
@@ -328,6 +328,9 @@ def create_app(test_config: dict | None = None) -> Flask:
             pizza_category_names=_unique_values(
                 tuple(app.config["SQUARE_PIZZA_CATEGORY_NAMES"]),
                 tuple(app.config["SPECIAL_SERVICE_CATEGORIES"]),
+            ),
+            hide_empty_category_names=tuple(
+                app.config["SPECIAL_SERVICE_CATEGORIES"]
             ),
             excluded_modifier_list_names=tuple(
                 app.config["SQUARE_EXCLUDED_MODIFIER_LIST_NAMES"]

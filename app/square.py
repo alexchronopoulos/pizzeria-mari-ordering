@@ -511,6 +511,7 @@ class SquareCatalogProvider:
         location_id: str,
         allowed_category_names: tuple[str, ...],
         pizza_category_names: tuple[str, ...],
+        hide_empty_category_names: tuple[str, ...] = (),
         excluded_modifier_list_names: tuple[str, ...] = (),
         cache_seconds: int = 30,
         logger: Any | None = None,
@@ -519,6 +520,7 @@ class SquareCatalogProvider:
         self.location_id = location_id
         self.allowed_category_names = allowed_category_names
         self.pizza_category_names = set(pizza_category_names)
+        self.hide_empty_category_names = set(hide_empty_category_names)
         self.excluded_modifier_list_names = {
             _normalized_name(name) for name in excluded_modifier_list_names
         }
@@ -754,7 +756,8 @@ class SquareCatalogProvider:
             variations = [
                 variation
                 for variation in item_data.get("variations", [])
-                if _present_at_location(variation, self.location_id)
+                if not variation.get("is_deleted", False)
+                and _present_at_location(variation, self.location_id)
             ]
             for variation in variations:
                 variation_data = variation.get("item_variation_data", {})
@@ -812,6 +815,8 @@ class SquareCatalogProvider:
         all_items: list[MenuItem] = []
         for category_id, (_, label) in sorted(allowed.items(), key=lambda pair: pair[1][0]):
             items = tuple(grouped[category_id])
+            if not items and label in self.hide_empty_category_names:
+                continue
             groups.append({"id": category_id, "label": label, "items": items})
             all_items.extend(items)
         return MenuSnapshot(

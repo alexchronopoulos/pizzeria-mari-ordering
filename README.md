@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.42 capabilities
+## Current v0.18.43 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -157,6 +157,11 @@ Configured special categories are automatically included in the published Square
 catalog categories, displayed above the standard categories, and treated as pizzas
 for cart and pickup-slot capacity. Multiple special categories retain the order
 listed in `SPECIAL_SERVICE_CATEGORIES`.
+
+A configured category is omitted when it has no active, sellable Item variations.
+Archiving its Items therefore removes the empty category heading after the catalog
+cache refreshes. A temporarily sold-out Item remains visible as unavailable, so a
+sold-out special does not make its category disappear.
 
 Use the existing Square `Days_Available` attribute to control when each special
 item itself can be ordered. For this service, assign Monday to each Pizza Friends
