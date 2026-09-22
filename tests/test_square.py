@@ -234,11 +234,35 @@ class SquareFixture:
         self.inventory_error = False
         self.day_availability: dict[str, tuple[str, ...]] = {}
         self.include_special_menu = False
+        self.special_item_state = "active"
 
     def _catalog_objects(self) -> list[dict]:
         objects = catalog_objects(
             include_special_menu=self.include_special_menu
         )
+        special_item = next(
+            (
+                catalog_object
+                for catalog_object in objects
+                if catalog_object.get("id") == "ITEM_PIZZA_FRIENDS"
+            ),
+            None,
+        )
+        if special_item is not None:
+            if self.special_item_state == "archived":
+                special_item["item_data"]["is_archived"] = True
+            elif self.special_item_state == "deleted_variation":
+                special_item["item_data"]["variations"][0]["is_deleted"] = True
+            elif self.special_item_state == "unsellable":
+                special_item["item_data"]["variations"][0][
+                    "item_variation_data"
+                ]["sellable"] = False
+            elif self.special_item_state == "sold_out":
+                special_item["item_data"]["variations"][0][
+                    "item_variation_data"
+                ]["location_overrides"] = [
+                    {"location_id": "LOCATION", "sold_out": True}
+                ]
         if self.day_availability:
             day_names = (
                 "Monday",
@@ -365,6 +389,14 @@ class SquareFixture:
                     "variations", []
                 )
             )
+            if self.special_item_state in {
+                "archived",
+                "deleted_variation",
+                "unsellable",
+            }:
+                expected_ids.difference_update(
+                    {"ITEM_PIZZA_FRIENDS", "VAR_PIZZA_FRIENDS"}
+                )
             assert set(body["catalog_object_ids"]) == expected_ids
             return httpx.Response(
                 200,
@@ -732,6 +764,58 @@ def test_special_service_category_is_published_and_consumes_slot_capacity():
     ) == 1
 
 
+@pytest.mark.parametrize(
+    "item_state",
+    ("archived", "deleted_variation", "unsellable"),
+)
+def test_empty_special_service_category_is_hidden(item_state):
+    fixture = SquareFixture()
+    fixture.include_special_menu = True
+    fixture.special_item_state = item_state
+    configured = create_app(
+        {
+            "TESTING": True,
+            "DEMO_MODE": False,
+            "SECRET_KEY": "test-secret-not-for-production",
+            "PUBLIC_BASE_URL": "https://orders.example.test",
+            "SQUARE_LOCATION_ID": "LOCATION",
+            "SQUARE_ACCESS_TOKEN": "test-token-not-a-real-secret",
+            "SQUARE_HTTP_TRANSPORT": httpx.MockTransport(fixture),
+            "SPECIAL_SERVICE_DATES": "2026-09-21",
+            "SPECIAL_SERVICE_CATEGORIES": "Pizza Friends",
+        }
+    )
+
+    snapshot = configured.extensions["menu_provider"].snapshot()
+
+    assert "Pizza Friends" not in {group["label"] for group in snapshot.groups}
+    assert "VAR_PIZZA_FRIENDS" not in snapshot.items_by_id
+
+
+def test_sold_out_special_service_item_keeps_its_category_visible():
+    fixture = SquareFixture()
+    fixture.include_special_menu = True
+    fixture.special_item_state = "sold_out"
+    configured = create_app(
+        {
+            "TESTING": True,
+            "DEMO_MODE": False,
+            "SECRET_KEY": "test-secret-not-for-production",
+            "PUBLIC_BASE_URL": "https://orders.example.test",
+            "SQUARE_LOCATION_ID": "LOCATION",
+            "SQUARE_ACCESS_TOKEN": "test-token-not-a-real-secret",
+            "SQUARE_HTTP_TRANSPORT": httpx.MockTransport(fixture),
+            "SPECIAL_SERVICE_DATES": "2026-09-21",
+            "SPECIAL_SERVICE_CATEGORIES": "Pizza Friends",
+        }
+    )
+
+    snapshot = configured.extensions["menu_provider"].snapshot()
+
+    assert snapshot.groups[0]["label"] == "Pizza Friends"
+    assert snapshot.items_by_id["VAR_PIZZA_FRIENDS"].available is False
+
+
 def test_square_inventory_displays_one_through_four_as_low_stock(square_app):
     square_app.square_fixture.inventory_counts.update(
         {
@@ -975,7 +1059,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.42")
+    prepare_app_for_serving(square_app, version="0.18.43")
 
     def request_count(path: str) -> int:
         return sum(
@@ -1235,7 +1319,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.42" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.43" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript
