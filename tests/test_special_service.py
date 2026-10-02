@@ -99,7 +99,7 @@ def test_special_and_regular_items_remain_visible_on_special_date(app):
     assert 'data-item-id="pizza-friends"' in page
     assert '"specialServiceDates": ["2026-09-21"]' in page
     assert '"specialServiceCategories": ["Pizza Friends"]' in page
-    assert "/static/app.js?v=0.18.43" in page
+    assert "/static/app.js?v=0.18.44" in page
 
 
 def test_only_special_category_can_be_added_on_special_date(app):

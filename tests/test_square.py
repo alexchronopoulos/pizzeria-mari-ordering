@@ -452,9 +452,14 @@ class SquareFixture:
             assert pickup["recipient"]["email_address"] == "alex@example.com"
             assert pickup["recipient"]["phone_number"] == "+15185550100"
             assert set(body["checkout_options"]) == {
+                "accepted_payment_methods",
                 "allow_tipping",
                 "enable_coupon",
                 "redirect_url",
+            }
+            assert body["checkout_options"]["accepted_payment_methods"] == {
+                "apple_pay": True,
+                "google_pay": False,
             }
             assert body["checkout_options"]["allow_tipping"] is True
             assert body["checkout_options"]["enable_coupon"] is True
@@ -1059,7 +1064,7 @@ def test_page_picker_and_cart_edits_reuse_square_reads(square_app):
 
 def test_production_warmup_keeps_inventory_off_initial_page_load(square_app):
     square_app.square_fixture.inventory_counts["VAR_SIDE"] = 4
-    prepare_app_for_serving(square_app, version="0.18.43")
+    prepare_app_for_serving(square_app, version="0.18.44")
 
     def request_count(path: str) -> int:
         return sum(
@@ -1319,7 +1324,7 @@ def test_square_checkout_redirects_to_hosted_payment_and_confirms_return(square_
     assert handoff.status_code == 200
     assert b"Opening Square" in handoff.data
     assert b'id="square-checkout-link" href="https://sandbox.square.link/u/test-checkout"' in handoff.data
-    assert b"/static/square-redirect.js?v=0.18.43" in handoff.data
+    assert b"/static/square-redirect.js?v=0.18.44" in handoff.data
     assert "form-action 'self'" in handoff.headers["Content-Security-Policy"]
     handoff_javascript = client.get("/static/square-redirect.js").get_data(as_text=True)
     assert "window.location.replace(link.href)" in handoff_javascript
