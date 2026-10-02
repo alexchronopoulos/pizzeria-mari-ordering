@@ -1298,6 +1298,10 @@ class SquareCommerce:
                 reference_id=reference,
             ),
             "checkout_options": {
+                "accepted_payment_methods": {
+                    "apple_pay": True,
+                    "google_pay": False,
+                },
                 "allow_tipping": True,
                 "enable_coupon": True,
                 "redirect_url": redirect_url,

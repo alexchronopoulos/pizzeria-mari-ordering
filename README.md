@@ -2,7 +2,7 @@
 
 A simple Flask ordering portal that uses Square as its business-data system of record while enforcing Pizzeria Mari's cart and pickup-slot rules.
 
-## Current v0.18.43 capabilities
+## Current v0.18.44 capabilities
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
@@ -26,7 +26,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 - Every other customer-facing modifier list attached to an item is rendered and validated automatically, including Square's inherited/unlimited selection rules.
 - Square's Sides, Desserts, Salads, and Drinks categories appear as regular main-menu sections while their old upsell modifier lists remain hidden.
 - Square-calculated taxes and automatic catalog discounts.
-- Square-hosted Checkout for cards and available digital wallets; raw payment details never reach Flask.
+- Square-hosted Checkout for cards and Apple Pay when available; Google Pay is disabled because its checkout attempts were producing unpaid orders. Raw payment details never reach Flask.
 - Declined-card guidance appears before the Square handoff. A browser returning with an unfinished hosted checkout verifies that attempt before another can begin, and can explicitly cancel an unstarted Payment Link before starting over.
 - Optional Square gift-card checkout through the Web Payments SDK. One gift card can cover the order or be combined with a credit/debit card for the remainder on the same Square order.
 - Delayed capture for gift-card and remainder-card payments. Square captures both only after their authorized amounts equal the order total.
