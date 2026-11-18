@@ -9,7 +9,7 @@ description = "A simple, capacity-aware online ordering portal for Pizzeria Mari
 requires-python = ">=3.12"
 dependencies = [
     "Flask>=3.1,<4",
-    "gunicorn>=26,<27",
+    "gunicorn>=26,<28",
     "httpx>=0.28,<1",
     "python-dotenv>=1.1,<2",
 ]
