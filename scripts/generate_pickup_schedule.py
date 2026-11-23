@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a balanced PICKUP_SCHEDULE value for one service day."""
+"""Generate a PICKUP_SCHEDULE value with optional peak-time priority."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from math import floor
 
 
 INTERVAL_MINUTES = 15
+DEFAULT_PEAK_HOURS = ("17:00", "19:00")
 WEEKDAY_KEYS = (
     "monday",
     "tuesday",
@@ -42,6 +43,8 @@ class GeneratedSchedule:
     total_dough_balls: int
     walk_in_reserve: int
     slice_pie_reserve: int
+    peak_start: str | None = None
+    peak_end: str | None = None
 
     @property
     def online_capacity(self) -> int:
@@ -82,6 +85,8 @@ def parse_slot_time(value: str) -> time:
         parsed = time.fromisoformat(value.strip())
     except ValueError as exc:
         raise ScheduleInputError("Times must use 24-hour HH:MM format.") from exc
+    if parsed.tzinfo is not None:
+        raise ScheduleInputError("Times must use local 24-hour HH:MM format.")
     if (
         parsed.second
         or parsed.microsecond
@@ -194,6 +199,8 @@ def generate_schedule(
     slice_pie_reserve: int,
     minimum: int,
     maximum: int,
+    peak_start: str | None = None,
+    peak_end: str | None = None,
 ) -> GeneratedSchedule:
     key = normalize_schedule_key(day)
     if dough_balls < 1:
@@ -213,6 +220,34 @@ def generate_schedule(
     capacities = distribute_capacity(
         online_capacity, len(times), minimum, maximum
     )
+    if (peak_start is None) != (peak_end is None):
+        raise ScheduleInputError("Peak start and end times must be supplied together.")
+    if peak_start is not None and peak_end is not None:
+        peak_times = service_times(peak_start, peak_end)
+        if not set(peak_times).issubset(times):
+            raise ScheduleInputError("Peak times must be within the service window.")
+        peak_start, peak_end = peak_times[0], peak_times[-1]
+        peak_indices = [i for i, value in enumerate(times) if value in peak_times]
+        other_indices = [i for i, value in enumerate(times) if value not in peak_times]
+
+        # Keep the minimum everywhere, then fill peak times to the maximum
+        # before giving extra capacity to the rest of the day. Within each
+        # group, use the existing balanced allocation and midpoint spacing.
+        peak_capacity = min(
+            online_capacity - len(other_indices) * minimum,
+            len(peak_indices) * maximum,
+        )
+        prioritized = [minimum] * len(times)
+        for indices, capacity in (
+            (peak_indices, peak_capacity),
+            (other_indices, online_capacity - peak_capacity),
+        ):
+            if not indices:
+                continue
+            allocations = distribute_capacity(capacity, len(indices), minimum, maximum)
+            for index, allocation in zip(indices, allocations, strict=True):
+                prioritized[index] = allocation
+        capacities = tuple(prioritized)
     return GeneratedSchedule(
         key=key,
         times=times,
@@ -221,6 +256,8 @@ def generate_schedule(
         total_dough_balls=dough_balls,
         walk_in_reserve=walk_in_reserve,
         slice_pie_reserve=slice_pie_reserve,
+        peak_start=peak_start,
+        peak_end=peak_end,
     )
 
 
@@ -265,6 +302,19 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--slice-pie-reserve", type=_whole_number, default=None)
     parser.add_argument("--min-per-slot", type=_whole_number)
     parser.add_argument("--max-per-slot", type=_whole_number)
+    parser.add_argument(
+        "--peak-start",
+        help="First peak pickup time in 24-hour HH:MM (requires --peak-end)",
+    )
+    parser.add_argument(
+        "--peak-end",
+        help="Last peak pickup time, inclusive, in 24-hour HH:MM (requires --peak-start)",
+    )
+    parser.add_argument(
+        "--no-peak",
+        action="store_true",
+        help="Distribute capacity evenly instead of using a peak range.",
+    )
     parser.add_argument(
         "--json-only",
         action="store_true",
@@ -312,6 +362,32 @@ def _collect_schedule(args: argparse.Namespace | None = None) -> GeneratedSchedu
         if args and args.max_per_slot is not None
         else _prompt_integer("Maximum online pizzas per 15 minutes", 3)
     )
+    peak_start = args.peak_start if args else None
+    peak_end = args.peak_end if args else None
+    if args and args.no_peak:
+        if peak_start is not None or peak_end is not None:
+            raise ScheduleInputError("--no-peak cannot be combined with peak times.")
+    elif peak_start is None and peak_end is None:
+        times = service_times(start, end)
+        default_peak = (
+            DEFAULT_PEAK_HOURS
+            if times[0] <= DEFAULT_PEAK_HOURS[0] <= DEFAULT_PEAK_HOURS[1] <= times[-1]
+            else None
+        )
+        if not args or not args.day:
+            peak_start = _prompt(
+                "First peak pickup time (HH:MM; 'none' to skip)",
+                default_peak[0] if default_peak else "none",
+            )
+            if peak_start.casefold() == "none":
+                peak_start = None
+            else:
+                peak_end = _prompt(
+                    "Last peak pickup time (HH:MM; inclusive)",
+                    default_peak[1] if default_peak else None,
+                )
+        elif default_peak:
+            peak_start, peak_end = default_peak
     return generate_schedule(
         day=key,
         start=start,
@@ -321,6 +397,8 @@ def _collect_schedule(args: argparse.Namespace | None = None) -> GeneratedSchedu
         slice_pie_reserve=slice_pie_reserve,
         minimum=minimum,
         maximum=maximum,
+        peak_start=peak_start,
+        peak_end=peak_end,
     )
 
 
@@ -346,6 +424,11 @@ def combined_payload(
 def _print_plan(generated: GeneratedSchedule) -> None:
     print(f"Pickup capacity plan — {generated.key}")
     print("--------------------")
+    if generated.peak_start is not None and generated.peak_end is not None:
+        print(
+            f"Peak pickup range: {_format_time(generated.peak_start)}–"
+            f"{_format_time(generated.peak_end)} (inclusive)"
+        )
     for pickup_time, capacity in zip(
         generated.times, generated.capacities, strict=True
     ):

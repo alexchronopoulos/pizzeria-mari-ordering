@@ -6,7 +6,7 @@ A simple Flask ordering portal that uses Square as its business-data system of r
 
 - Orders through seven days in advance with configurable 15-minute pickup times.
 - Recurring weekday and one-date pickup schedules with a separate pizza capacity for each time range.
-- An interactive pickup-schedule generator that balances online dough-ball capacity between minimum and maximum 15-minute limits, supports separate walk-in and slice-pie reserves plus closed recovery periods, and combines multiple prompted days into ready-to-paste weekly JSON.
+- An interactive pickup-schedule generator that prioritizes a configurable peak range (default 5–7 PM), balances online dough-ball capacity between minimum and maximum 15-minute limits, supports separate walk-in and slice-pie reserves plus closed recovery periods, and combines multiple prompted days into ready-to-paste weekly JSON.
 - Configurable pizza-cart and overall-item limits.
 - Every pickup time shows its remaining pizza capacity; full times remain visible and clearly labeled instead of disappearing.
 - A saved pickup time is rechecked when the storefront or checkout page opens; if it has filled, the next available time is selected automatically.
@@ -246,11 +246,25 @@ For each weekday or specific date, enter the first and last pickup times, total
 dough balls, optional Walk-in Reserve and Slice Pie Reserve values, and the
 minimum and maximum online pizzas per pickup time. Both reserves default to
 zero, while the minimum defaults to 2 and the maximum defaults to 3. Press
-Enter to accept any default. The reserves are subtracted before online capacity is distributed. The generator
-spreads heavier periods apart whenever the total allows it. For example, 15
-online dough balls across six times with a minimum of 2 and maximum of 3
-produces `2, 3, 2, 3, 2, 3`. Use a minimum of `0` if actual closed 15-minute
-recovery periods are acceptable.
+Enter to accept any default. The reserves are subtracted before online capacity
+is distributed.
+
+The peak pickup range defaults to **17:00–19:00 (5–7 PM), including both end
+times**, when that whole range fits within the service hours. Otherwise, it
+defaults to no peak range. Enter different peak start/end times to override it,
+or enter `none` at the first peak prompt to use even distribution. Peak times
+must align to 15 minutes and stay within the service window. A peak range with
+the same start and end prioritizes just that one pickup time.
+
+Every pickup time receives the minimum first. Extra capacity goes to peak times
+up to the maximum before any extras are assigned outside the peak range. Extras
+are balanced and spaced within each group. If the dough total cannot fill all
+peak times to the maximum, only the available extras are assigned; the generator
+never increases the total or exceeds your per-time maximum. For example, 15
+online dough balls across six times with a minimum of 2 and maximum of 3 produce
+`2, 2, 2, 3, 3, 3` when the last three times are the peak range. With no peak
+range, the same inputs produce `2, 3, 2, 3, 2, 3`. Use a minimum of `0` if actual
+closed 15-minute recovery periods are acceptable.
 
 After every day, answer the `Add another day?` prompt. When finished, the final
 line is one compact JSON object containing every entered weekday or date. It is
@@ -264,8 +278,15 @@ The same utility can be run non-interactively:
 uv run python scripts/generate_pickup_schedule.py \
   --day thursday --start 16:00 --end 17:15 \
   --dough-balls 20 --walk-in-reserve 2 --slice-pie-reserve 3 \
-  --min-per-slot 2 --max-per-slot 3
+  --min-per-slot 2 --max-per-slot 3 \
+  --peak-start 16:45 --peak-end 17:15
 ```
+
+Omit both peak flags to use the 17:00–19:00 default when it fits, or add
+`--no-peak` for the original even distribution. Custom peak flags must be
+supplied together and cannot be combined with `--no-peak`. Add `--json-only`
+to print only the JSON value. The generator creates a plan to review and paste;
+it does not change the live site's configuration.
 
 Cart and production thresholds are also configurable without editing source:
 
